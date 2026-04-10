@@ -1,0 +1,146 @@
+{{ 'codersh-t01.css' | asset_url | stylesheet_tag }}
+
+<div class="cdr-t01" id="cdr-t01-{{ section.id }}">
+  <div class="cdr-t01__header">
+    <div class="cdr-t01__header-inner">
+      <div>
+        <p class="cdr-t01__label">{{ section.settings.label }}</p>
+        <h2 class="cdr-t01__title">{{ section.settings.title }}</h2>
+      </div>
+      <p class="cdr-t01__drag-hint">{{ section.settings.subtitle }} →</p>
+    </div>
+  </div>
+
+  <div class="cdr-t01__track" id="cdr-t01-track-{{ section.id }}">
+    {% assign names = section.settings.names | split: '|' %}
+    {% assign roles = section.settings.roles | split: '|' %}
+    {% assign companies = section.settings.companies | split: '|' %}
+    {% assign quotes = section.settings.quotes | split: '|' %}
+    {% assign avatars = section.settings.avatars | split: '|' %}
+    {% assign services = section.settings.services | split: '|' %}
+
+    {% for quote in quotes %}
+      {% assign idx = forloop.index0 %}
+      <article class="cdr-t01__card">
+        <div class="cdr-t01__card-top">
+          <div class="cdr-t01__stars">
+            {% for i in (1..5) %}
+              <svg viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 1l1.94 3.93 4.33.63-3.13 3.05.74 4.31L8 10.77l-3.88 2.04.74-4.31L1.73 5.56l4.33-.63L8 1z"/>
+              </svg>
+            {% endfor %}
+          </div>
+          <span class="cdr-t01__service">{{ services[idx] }}</span>
+        </div>
+        <blockquote class="cdr-t01__quote">"{{ quote }}"</blockquote>
+        <div class="cdr-t01__author">
+          {% if avatars[idx] != blank %}
+            <img src="{{ avatars[idx] }}" alt="{{ names[idx] }}" class="cdr-t01__avatar" loading="lazy" width="40" height="40"/>
+          {% else %}
+            <div class="cdr-t01__avatar-placeholder">{{ names[idx] | slice: 0 }}</div>
+          {% endif %}
+          <div>
+            <p class="cdr-t01__name">{{ names[idx] }}</p>
+            <p class="cdr-t01__role">{{ roles[idx] }} · {{ companies[idx] }}</p>
+          </div>
+        </div>
+      </article>
+    {% endfor %}
+    <div class="cdr-t01__spacer"></div>
+  </div>
+
+  <div class="cdr-t01__dots" id="cdr-t01-dots-{{ section.id }}">
+    {% for quote in quotes %}
+      <button class="cdr-t01__dot" data-index="{{ forloop.index0 }}" aria-label="Go to testimonial {{ forloop.index }}"></button>
+    {% endfor %}
+  </div>
+</div>
+
+<style>
+  #cdr-t01-{{ section.id }} {
+    --cdr-accent: {{ section.settings.accent_color }};
+  }
+
+  .cdr-t01 { padding: 60px 20px; font-family: inherit; }
+  .cdr-t01__header { margin-bottom: 32px; }
+  .cdr-t01__header-inner { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; max-width: 1200px; margin: 0 auto; }
+  .cdr-t01__label { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--cdr-accent); margin-bottom: 8px; }
+  .cdr-t01__title { font-size: clamp(24px, 4vw, 40px); font-weight: 700; line-height: 1.2; }
+  .cdr-t01__drag-hint { font-size: 14px; color: #666; white-space: nowrap; }
+  .cdr-t01__track { display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory; cursor: grab; padding-bottom: 16px; scrollbar-width: none; -ms-overflow-style: none; }
+  .cdr-t01__track::-webkit-scrollbar { display: none; }
+  .cdr-t01__card { min-width: 320px; background: #fff; border: 1px solid #eee; border-radius: 16px; padding: 28px; scroll-snap-align: start; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .cdr-t01__card-top { display: flex; justify-content: space-between; align-items: center; }
+  .cdr-t01__stars { display: flex; gap: 2px; color: var(--cdr-accent); }
+  .cdr-t01__stars svg { width: 14px; height: 14px; }
+  .cdr-t01__service { font-size: 11px; font-weight: 600; background: #f5f5f5; padding: 4px 10px; border-radius: 20px; color: #555; }
+  .cdr-t01__quote { font-size: 15px; line-height: 1.6; color: #333; flex: 1; }
+  .cdr-t01__author { display: flex; align-items: center; gap: 12px; margin-top: auto; }
+  .cdr-t01__avatar { border-radius: 50%; object-fit: cover; }
+  .cdr-t01__avatar-placeholder { width: 40px; height: 40px; border-radius: 50%; background: var(--cdr-accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; flex-shrink: 0; }
+  .cdr-t01__name { font-weight: 600; font-size: 14px; }
+  .cdr-t01__role { font-size: 12px; color: #888; }
+  .cdr-t01__spacer { min-width: 20px; }
+  .cdr-t01__dots { display: flex; justify-content: center; gap: 8px; margin-top: 20px; }
+  .cdr-t01__dot { width: 8px; height: 8px; border-radius: 50%; background: #ddd; border: none; cursor: pointer; padding: 0; transition: background 0.2s; }
+  .cdr-t01__dot:hover { background: var(--cdr-accent); }
+</style>
+
+<script>
+(function() {
+  var id = '{{ section.id }}';
+  var track = document.getElementById('cdr-t01-track-' + id);
+  var dotsContainer = document.getElementById('cdr-t01-dots-' + id);
+  if (!track) return;
+
+  var isDragging = false, startX = 0, scrollLeft = 0;
+  track.addEventListener('mousedown', function(e) {
+    isDragging = true;
+    startX = e.pageX - track.offsetLeft;
+    scrollLeft = track.scrollLeft;
+    track.style.cursor = 'grabbing';
+  });
+  track.addEventListener('mouseleave', function() { isDragging = false; track.style.cursor = 'grab'; });
+  track.addEventListener('mouseup', function() { isDragging = false; track.style.cursor = 'grab'; });
+  track.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    track.scrollLeft = scrollLeft - (e.pageX - track.offsetLeft - startX) * 1.5;
+  });
+
+  track.addEventListener('touchstart', function(e) {
+    startX = e.touches[0].pageX - track.offsetLeft;
+    scrollLeft = track.scrollLeft;
+  }, { passive: true });
+  track.addEventListener('touchmove', function(e) {
+    track.scrollLeft = scrollLeft - (e.touches[0].pageX - track.offsetLeft - startX) * 1.5;
+  }, { passive: true });
+
+  if (dotsContainer) {
+    dotsContainer.querySelectorAll('.cdr-t01__dot').forEach(function(dot) {
+      dot.addEventListener('click', function() {
+        track.scrollTo({ left: (320 + 16) * parseInt(this.dataset.index), behavior: 'smooth' });
+      });
+    });
+  }
+})();
+</script>
+
+{% schema %}
+{
+  "name": "T01 Horizontal Scroll",
+  "settings": [
+    { "type": "text", "id": "label", "label": "Section Label", "default": "CLIENT STORIES" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "Trusted by brands across the US" },
+    { "type": "text", "id": "subtitle", "label": "Drag Hint", "default": "Drag to explore client stories" },
+    { "type": "textarea", "id": "names", "label": "Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter|Michael Reed|Brandon Lee|Ashley Chen" },
+    { "type": "textarea", "id": "roles", "label": "Roles (pipe-separated)", "default": "Founder|Owner|Marketing Director|Founder|Owner|CMO" },
+    { "type": "textarea", "id": "companies", "label": "Companies (pipe-separated)", "default": "Custom Photo Books|Texas Baseball Co.|Hudson Pecan|Peak Supplements|Lone Star Apparel|Bare Supply Co." },
+    { "type": "textarea", "id": "quotes", "label": "Quotes (pipe-separated)", "default": "Codersh built our entire customization flow from scratch.|We hired Codersh for a Shopify rebuild and our sales jumped by 38%.|Their attention to design and performance is unmatched.|From Figma to Shopify, the execution was flawless.|The migration was completely painless. Zero downtime.|Our add-to-cart rate went up 22% after the CRO audit." },
+    { "type": "textarea", "id": "avatars", "label": "Avatar URLs (pipe-separated)", "default": "https://i.pravatar.cc/80?img=1|https://i.pravatar.cc/80?img=2|https://i.pravatar.cc/80?img=3" },
+    { "type": "textarea", "id": "services", "label": "Service Tags (pipe-separated)", "default": "Shopify Dev|CRO|Performance|Figma to Shopify|Migration|CRO" },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" }
+  ],
+  "presets": [{ "name": "T01 Horizontal Scroll" }]
+}
+{% endschema %}

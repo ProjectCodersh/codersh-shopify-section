@@ -1,0 +1,102 @@
+<div class="cdr-t04" id="cdr-t04-{{ section.id }}">
+<div class="cdr-t04__inner">
+<div class="cdr-t04__header">
+<p class="cdr-t04__label">{{ section.settings.label }}</p>
+<h2 class="cdr-t04__title">{{ section.settings.title }}</h2>
+<p class="cdr-t04__subtitle">{{ section.settings.subtitle }}</p>
+</div>
+{% assign client_names = section.settings.client_names | split: '|' %}
+{% assign client_shorts = section.settings.client_shorts | split: '|' %}
+{% assign client_roles = section.settings.client_roles | split: '|' %}
+{% assign client_avatars = section.settings.client_avatars | split: '|' %}
+<div class="cdr-t04__wrap">
+<div class="cdr-t04__tabs" id="cdr-t04-tabs-{{ section.id }}">
+{% for name in client_names %}
+<button class="cdr-t04__tab {% if forloop.first %}cdr-t04__tab--active{% endif %}" data-index="{{ forloop.index0 }}">
+{% if client_avatars[forloop.index0] != blank %}
+<img src="{{ client_avatars[forloop.index0] }}" alt="{{ name }}" class="cdr-t04__tab-avatar" loading="lazy"  width="20" height="20"/>
+{% endif %}
+{{ client_shorts[forloop.index0] }}
+</button>
+{% endfor %}
+</div>
+<div class="cdr-t04__chat-frame">
+<div class="cdr-t04__chat-header" id="cdr-t04-cheader-{{ section.id }}">
+{% if client_avatars[0] != blank %}
+<img src="{{ client_avatars[0] }}" class="cdr-t04__chat-avatar" alt="{{ client_names[0] }}"  width="32" height="32"/>
+{% endif %}
+<div>
+<p class="cdr-t04__chat-name">{{ client_names[0] }}</p>
+<p class="cdr-t04__chat-role">{{ client_roles[0] }}</p>
+</div>
+<div class="cdr-t04__online">
+<span class="cdr-t04__online-dot"></span>
+<span>Online</span>
+</div>
+</div>
+<div class="cdr-t04__messages" id="cdr-t04-messages-{{ section.id }}">
+</div>
+</div>
+</div>
+</div>
+</div>
+{% schema %}
+{
+  "name": "T04 Chat Testimonials",
+    "settings": [
+    { "type": "text", "id": "label", "label": "Section Label", "default": "REAL CONVERSATIONS" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "Straight from the conversation" },
+    { "type": "text", "id": "subtitle", "label": "Subheading", "default": "Unfiltered client feedback from our project check-ins." },
+    { "type": "textarea", "id": "client_names", "label": "Client Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter" },
+    { "type": "textarea", "id": "client_shorts", "label": "Short Names (pipe-separated)", "default": "Shreyans|James|Emily" },
+    { "type": "textarea", "id": "client_roles", "label": "Client Roles (pipe-separated)", "default": "Founder, Custom Photo Books|Owner, Texas Baseball Co.|Marketing Director, Hudson Pecan" },
+    { "type": "textarea", "id": "client_avatars", "label": "Avatar URLs (pipe-separated, optional)", "default": "https://i.pravatar.cc/80?img=1|https://i.pravatar.cc/80?img=2|https://i.pravatar.cc/80?img=3" },
+    { "type": "textarea", "id": "conversations_json", "label": "Conversations JSON", "info": "Paste a JSON array of conversations. Each: {messages:[{sender:'client'|'codersh', text:'...', time:'...'}]}", "default": "[[{\"sender\":\"codersh\",\"text\":\"Hi Shreyans — how's the new customization flow performing?\",\"time\":\"10:02 AM\"},{\"sender\":\"client\",\"text\":\"Honestly, it exceeded everything we hoped for. Customers are actually completing orders they used to abandon.\",\"time\":\"10:04 AM\"},{\"sender\":\"client\",\"text\":\"Conversion is up, average order value is up. Our previous dev couldn't get this right for 8 months.\",\"time\":\"10:05 AM\"},{\"sender\":\"codersh\",\"text\":\"That's great to hear. Any areas you'd want to push further?\",\"time\":\"10:06 AM\"},{\"sender\":\"client\",\"text\":\"Not right now — everything works exactly as intended. Already referring you to two other founders.\",\"time\":\"10:08 AM\"}],[{\"sender\":\"codersh\",\"text\":\"James, it's been 60 days since launch — how are you feeling about the rebuild?\",\"time\":\"2:11 PM\"},{\"sender\":\"client\",\"text\":\"Sales are up 38% compared to the same period last year. That's not something I take lightly.\",\"time\":\"2:13 PM\"},{\"sender\":\"client\",\"text\":\"The site finally looks like the brand we've built. Customers comment on it unprompted.\",\"time\":\"2:14 PM\"},{\"sender\":\"codersh\",\"text\":\"That's exactly what we were aiming for. Glad the CRO work paid off.\",\"time\":\"2:15 PM\"},{\"sender\":\"client\",\"text\":\"The CRO audit alone was worth it. You found friction points we'd been living with for years.\",\"time\":\"2:16 PM\"}],[{\"sender\":\"codersh\",\"text\":\"Emily, what's the team saying about the new site performance?\",\"time\":\"9:22 AM\"},{\"sender\":\"client\",\"text\":\"Lighthouse score went from 51 to 94. Our paid traffic finally stops bouncing.\",\"time\":\"9:24 AM\"},{\"sender\":\"client\",\"text\":\"The design is polished in a way we couldn't articulate in the brief but you nailed it.\",\"time\":\"9:25 AM\"},{\"sender\":\"codersh\",\"text\":\"Glad the performance work is showing results on paid. Anything to refine?\",\"time\":\"9:26 AM\"},{\"sender\":\"client\",\"text\":\"Nothing urgent — the site is doing its job. We'll come back for the next phase soon.\",\"time\":\"9:28 AM\"}]]" },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" }
+  ]
+,
+  "presets": [{"name": "T04 Chat Testimonials"}]
+}
+{% endschema %}
+<style>#cdr-t04-{{section.id}}{--cdr-accent:{{section.settings.accent_color}};}@keyframes cdr-t04-msgIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}</style>
+<script>(function() {
+var blockId = '{{ section.id }}';
+var clientNames = {{ section.settings.client_names | split: '|' | json }};
+var clientRoles = {{ section.settings.client_roles | split: '|' | json }};
+var clientAvatars = {{ section.settings.client_avatars | split: '|' | json }};
+var convJSON = '{{ section.settings.conversations_json | escape }}';
+var conversations;
+try { conversations = JSON.parse(convJSON.replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&amp;/g,'&')); } catch(e) { conversations = []; }
+var messagesContainer = document.getElementById('cdr-t04-messages-' + blockId);
+var cheader = document.getElementById('cdr-t04-cheader-' + blockId);
+var tabs = document.querySelectorAll('#cdr-t04-tabs-' + blockId + ' .cdr-t04__tab');
+function renderMessages(idx) {
+var msgs = conversations[idx] || [];
+messagesContainer.innerHTML = '';
+msgs.forEach(function(msg, i) {
+var div = document.createElement('div');
+div.className = 'cdr-t04__msg cdr-t04__msg--' + msg.sender;
+div.style.animationDelay = (i * 0.08) + 's';
+div.innerHTML = '<div class="cdr-t04__bubble">' + msg.text + '</div><span class="cdr-t04__time">' + msg.time + '</span>';
+messagesContainer.appendChild(div);
+});
+}
+function updateHeader(idx) {
+var avatarEl = cheader.querySelector('img');
+var nameEl = cheader.querySelector('.cdr-t04__chat-name');
+var roleEl = cheader.querySelector('.cdr-t04__chat-role');
+if (nameEl) nameEl.textContent = clientNames[idx] || '';
+if (roleEl) roleEl.textContent = clientRoles[idx] || '';
+if (avatarEl && clientAvatars[idx]) avatarEl.src = clientAvatars[idx];
+}
+tabs.forEach(function(tab) {
+tab.addEventListener('click', function() {
+var idx = parseInt(this.dataset.index);
+tabs.forEach(function(t) { t.classList.remove('cdr-t04__tab--active'); });
+this.classList.add('cdr-t04__tab--active');
+updateHeader(idx);
+renderMessages(idx);
+});
+});
+renderMessages(0);
+})();</script>

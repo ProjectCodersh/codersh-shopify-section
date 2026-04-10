@@ -1,0 +1,97 @@
+<div class="cdr-t09" id="cdr-t09-{{ section.id }}">
+<div class="cdr-t09__inner">
+{% assign names = section.settings.names | split: '|' %}
+{% assign roles = section.settings.roles | split: '|' %}
+{% assign companies = section.settings.companies | split: '|' %}
+{% assign quotes = section.settings.quotes | split: '|' %}
+{% assign avatars = section.settings.avatars | split: '|' %}
+{% assign darks = section.settings.darks | split: '|' %}
+<div class="cdr-t09__left">
+<div class="cdr-t09__stack" id="cdr-t09-stack-{{ section.id }}">
+{% for quote in quotes %}
+{% assign idx = forloop.index0 %}
+{% assign is_dark = false %}
+{% if darks[idx] == 'true' %}{% assign is_dark = true %}{% endif %}
+<article class="cdr-t09__card {% if is_dark %}cdr-t09__card--dark{% endif %}" data-index="{{ idx }}">
+<div class="cdr-t09__card-stars">
+{% for s in (1..5) %}<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.94 3.93 4.33.63-3.13 3.05.74 4.31L8 10.77l-3.88 2.04.74-4.31L1.73 5.56l4.33-.63L8 1z"/></svg>{% endfor %}
+</div>
+<p class="cdr-t09__card-quote">"{{ quote }}"</p>
+<div class="cdr-t09__card-author">
+{% if avatars[idx] != blank %}
+<img src="{{ avatars[idx] }}" alt="{{ names[idx] }}" class="cdr-t09__card-avatar" loading="lazy"  width="32" height="32"/>
+{% else %}
+<div class="cdr-t09__card-ph">{{ names[idx] | slice: 0 }}</div>
+{% endif %}
+<div>
+<p class="cdr-t09__card-name">{{ names[idx] }}</p>
+<p class="cdr-t09__card-role">{{ roles[idx] }} · {{ companies[idx] }}</p>
+</div>
+</div>
+</article>
+{% endfor %}
+</div>
+</div>
+<div class="cdr-t09__right">
+<p class="cdr-t09__label">{{ section.settings.label }}</p>
+<h2 class="cdr-t09__title">{{ section.settings.title }}</h2>
+<p class="cdr-t09__desc">{{ section.settings.description }}</p>
+<ul class="cdr-t09__list">
+{% assign bullets = section.settings.bullets | split: '|' %}
+{% for bullet in bullets %}
+<li class="cdr-t09__list-item">
+<span class="cdr-t09__check">
+<svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+</span>
+{{ bullet }}
+</li>
+{% endfor %}
+</ul>
+<a href="{{ section.settings.cta_url }}" class="cdr-t09__cta">{{ section.settings.cta_text }}</a>
+</div>
+</div>
+</div>
+{% schema %}
+{
+  "name": "T09 Floating Cards",
+    "settings": [
+    { "type": "text", "id": "label", "label": "Label", "default": "Why clients choose us" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "Built for brands that take performance seriously" },
+    { "type": "textarea", "id": "description", "label": "Description", "default": "From Shopify rebuilds to CRO audits — US brands come to Codersh for execution that actually moves the needle." },
+    { "type": "textarea", "id": "bullets", "label": "Bullet Points (pipe-separated)", "default": "Custom Shopify development, not template patches|CRO audits that identify real revenue leaks|Figma-to-Shopify handoffs with pixel-perfect accuracy|Performance optimization from day one" },
+    { "type": "text", "id": "cta_text", "label": "CTA Button Text", "default": "Start a project" },
+    { "type": "url", "id": "cta_url", "label": "CTA URL" },
+    { "type": "textarea", "id": "names", "label": "Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter|Michael Reed" },
+    { "type": "textarea", "id": "roles", "label": "Roles (pipe-separated)", "default": "Founder|Owner|Marketing Director|Founder" },
+    { "type": "textarea", "id": "companies", "label": "Companies (pipe-separated)", "default": "Custom Photo Books|Texas Baseball Co.|Hudson Pecan|Peak Supplements" },
+    { "type": "textarea", "id": "quotes", "label": "Quotes (pipe-separated)", "default": "Codersh delivered what our previous dev couldn't in 8 months — in 6 weeks. The UX is seamless.|Sales jumped 38%. Best Shopify dev investment we've ever made.|The site loads faster and looks significantly more polished. Bounce rate dropped immediately.|From Figma to Shopify, execution was flawless. They understand design and conversion." },
+    { "type": "textarea", "id": "avatars", "label": "Avatar URLs (pipe-separated, optional)", "default": "https://i.pravatar.cc/80?img=1|https://i.pravatar.cc/80?img=2|https://i.pravatar.cc/80?img=3" },
+    { "type": "textarea", "id": "darks", "label": "Dark card? true/false (pipe-separated)", "default": "false|true|false|false" },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" }
+  ]
+,
+  "presets": [{"name": "T09 Floating Cards"}]
+}
+{% endschema %}
+<style>#cdr-t09-{{section.id}}{--cdr-accent:{{section.settings.accent_color}};}</style>
+<script>(function() {
+var stack = document.getElementById('cdr-t09-stack-{{ section.id }}');
+if (!stack) return;
+var cards = stack.querySelectorAll('.cdr-t09__card');
+var total = cards.length;
+var rots = [-6, -2, 2, 6, 10];
+var txs = [-8, -3, 0, 4, 8];
+var tys = [4, 2, 0, -2, -4];
+function layout(hovered) {
+cards.forEach(function(card, i) {
+var r = hovered ? rots[i % rots.length] * 1.5 : rots[i % rots.length];
+var tx = hovered ? txs[i % txs.length] * 2 : txs[i % txs.length];
+var ty = hovered ? tys[i % tys.length] * 2 : tys[i % tys.length];
+var scale = hovered ? (1 + i * 0.02) : 1;
+card.style.transform = 'translateY(' + ty + 'px) translateX(' + tx + 'px) rotate(' + r + 'deg) scale(' + scale + ')';
+});
+}
+layout(false);
+stack.addEventListener('mouseenter', function() { layout(true); });
+stack.addEventListener('mouseleave', function() { layout(false); });
+})();</script>

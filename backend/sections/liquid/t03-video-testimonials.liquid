@@ -1,0 +1,111 @@
+<div class="cdr-t03" id="cdr-t03-{{ section.id }}">
+<div class="cdr-t03__inner">
+<div class="cdr-t03__header">
+<p class="cdr-t03__label">{{ section.settings.label }}</p>
+<h2 class="cdr-t03__title">{{ section.settings.title }}</h2>
+<p class="cdr-t03__subtitle">{{ section.settings.subtitle }}</p>
+</div>
+{% assign names = section.settings.names | split: '|' %}
+{% assign roles = section.settings.roles | split: '|' %}
+{% assign companies = section.settings.companies | split: '|' %}
+{% assign quotes = section.settings.quotes | split: '|' %}
+{% assign thumbnails = section.settings.thumbnails | split: '|' %}
+{% assign durations = section.settings.durations | split: '|' %}
+{% assign initials = section.settings.initials | split: '|' %}
+{% assign video_urls = section.settings.video_urls | split: '|' %}
+<div class="cdr-t03__grid">
+{% for name in names %}
+{% assign idx = forloop.index0 %}
+<button class="cdr-t03__card" data-index="{{ idx }}" data-video="{{ video_urls[idx] }}"
+data-name="{{ names[idx] }}" data-role="{{ roles[idx] }}" data-company="{{ companies[idx] }}"
+data-duration="{{ durations[idx] }}" data-thumb="{{ thumbnails[idx] }}" data-quote="{{ quotes[idx] }}">
+<div class="cdr-t03__thumb-wrap">
+{% if thumbnails[idx] != blank %}
+<img src="{{ thumbnails[idx] }}" alt="{{ companies[idx] }}" class="cdr-t03__thumb" loading="lazy"  width="600" height="400"/>
+{% endif %}
+<div class="cdr-t03__thumb-overlay"></div>
+<div class="cdr-t03__play">
+<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+</div>
+<span class="cdr-t03__duration">{{ durations[idx] }}</span>
+</div>
+<div class="cdr-t03__body">
+<p class="cdr-t03__quote">"{{ quotes[idx] }}"</p>
+<div class="cdr-t03__meta">
+<div class="cdr-t03__initial">{{ initials[idx] }}</div>
+<div>
+<p class="cdr-t03__name">{{ names[idx] }}</p>
+<p class="cdr-t03__role">{{ roles[idx] }} · {{ companies[idx] }}</p>
+</div>
+</div>
+</div>
+</button>
+{% endfor %}
+</div>
+</div>
+<div class="cdr-t03__modal" id="cdr-t03-modal-{{ section.id }}" style="display:none" aria-modal="true" role="dialog">
+<div class="cdr-t03__modal-backdrop" id="cdr-t03-backdrop-{{ section.id }}"></div>
+<div class="cdr-t03__modal-box">
+<div class="cdr-t03__modal-player" id="cdr-t03-player-{{ section.id }}">
+<img src="" alt="" class="cdr-t03__modal-thumb" id="cdr-t03-mthumb-{{ section.id }}"  width="640" height="360"/>
+<div class="cdr-t03__modal-play-big">
+<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+</div>
+</div>
+<div class="cdr-t03__modal-footer">
+<div>
+<p class="cdr-t03__modal-name" id="cdr-t03-mname-{{ section.id }}"></p>
+<p class="cdr-t03__modal-role" id="cdr-t03-mrole-{{ section.id }}"></p>
+</div>
+<button class="cdr-t03__modal-close" id="cdr-t03-close-{{ section.id }}">Close</button>
+</div>
+</div>
+</div>
+</div>
+{% schema %}
+{
+  "name": "T03 Video Testimonials",
+    "settings": [
+    { "type": "text", "id": "label", "label": "Section Label", "default": "VIDEO REVIEWS" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "Hear it directly from our clients" },
+    { "type": "text", "id": "subtitle", "label": "Subheading", "default": "Short video testimonials from US brand owners we've worked with." },
+    { "type": "textarea", "id": "names", "label": "Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter|Michael Reed" },
+    { "type": "textarea", "id": "roles", "label": "Roles (pipe-separated)", "default": "Founder|Owner|Marketing Director|Founder" },
+    { "type": "textarea", "id": "companies", "label": "Companies (pipe-separated)", "default": "Custom Photo Books|Texas Baseball Co.|Hudson Pecan|D2C Supplement Brand" },
+    { "type": "textarea", "id": "quotes", "label": "Quotes (pipe-separated)", "default": "Codersh built our entire customization flow. The UX is seamless and conversions improved significantly.|Sales jumped 38% after the Shopify rebuild. The site now feels as premium as our products.|The site loads faster and looks significantly more polished. Bounce rate dropped immediately after launch.|From Figma to Shopify, execution was flawless. They deeply understand design and conversion." },
+    { "type": "textarea", "id": "thumbnails", "label": "Thumbnail URLs (pipe-separated)", "default": "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=600&h=400&fit=crop|https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600&h=400&fit=crop|https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&h=400&fit=crop|https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=600&h=400&fit=crop" },
+    { "type": "textarea", "id": "durations", "label": "Video Durations (pipe-separated)", "default": "2:14|1:48|2:31|1:55" },
+    { "type": "textarea", "id": "initials", "label": "Company Initials (pipe-separated)", "default": "CP|TB|HP|DS" },
+    { "type": "textarea", "id": "video_urls", "label": "Video URLs (pipe-separated, optional)", "default": "https://www.youtube.com/watch?v=dQw4w9WgXcQ|https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" }
+  ]
+,
+  "presets": [{"name": "T03 Video Testimonials"}]
+}
+{% endschema %}
+<style>#cdr-t03-{{section.id}}{--cdr-accent:{{section.settings.accent_color}};}</style>
+<script>(function() {
+var blockId = '{{ section.id }}';
+var modal = document.getElementById('cdr-t03-modal-' + blockId);
+var backdrop = document.getElementById('cdr-t03-backdrop-' + blockId);
+var closeBtn = document.getElementById('cdr-t03-close-' + blockId);
+var mthumb = document.getElementById('cdr-t03-mthumb-' + blockId);
+var mname = document.getElementById('cdr-t03-mname-' + blockId);
+var mrole = document.getElementById('cdr-t03-mrole-' + blockId);
+document.querySelectorAll('#cdr-t03-' + blockId + ' .cdr-t03__card').forEach(function(card) {
+card.addEventListener('click', function() {
+mthumb.src = this.dataset.thumb || '';
+mname.textContent = this.dataset.name;
+mrole.textContent = this.dataset.role + ' · ' + this.dataset.company;
+modal.style.display = 'flex';
+document.body.style.overflow = 'hidden';
+});
+});
+function closeModal() {
+modal.style.display = 'none';
+document.body.style.overflow = '';
+}
+if (closeBtn) closeBtn.addEventListener('click', closeModal);
+if (backdrop) backdrop.addEventListener('click', closeModal);
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
+})();</script>

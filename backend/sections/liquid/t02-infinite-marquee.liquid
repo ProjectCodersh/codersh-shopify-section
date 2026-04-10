@@ -1,0 +1,58 @@
+<div class="cdr-t02" id="cdr-t02-{{ section.id }}">
+<div class="cdr-t02__header">
+<p class="cdr-t02__label">{{ section.settings.label }}</p>
+<h2 class="cdr-t02__title">{{ section.settings.title }}</h2>
+<p class="cdr-t02__subtitle">{{ section.settings.subtitle }}</p>
+</div>
+{% assign names = section.settings.names | split: '|' %}
+{% assign roles = section.settings.roles | split: '|' %}
+{% assign quotes = section.settings.quotes | split: '|' %}
+{% assign avatars = section.settings.avatars | split: '|' %}
+<div class="cdr-t02__wrapper">
+<div class="cdr-t02__fade cdr-t02__fade--left"></div>
+<div class="cdr-t02__fade cdr-t02__fade--right"></div>
+<div class="cdr-t02__track" id="cdr-t02-track-{{ section.id }}">
+{% for i in (1..2) %}
+{% for quote in quotes %}
+{% assign idx = forloop.index0 %}
+<div class="cdr-t02__card">
+<div class="cdr-t02__stars">
+{% for s in (1..5) %}<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.94 3.93 4.33.63-3.13 3.05.74 4.31L8 10.77l-3.88 2.04.74-4.31L1.73 5.56l4.33-.63L8 1z"/></svg>{% endfor %}
+</div>
+<p class="cdr-t02__quote">"{{ quote }}"</p>
+<div class="cdr-t02__author">
+{% if avatars[idx] != blank %}
+<img src="{{ avatars[idx] }}" alt="{{ names[idx] }}" class="cdr-t02__avatar" loading="lazy"  width="32" height="32"/>
+{% else %}
+<div class="cdr-t02__avatar-placeholder">{{ names[idx] | slice: 0 }}</div>
+{% endif %}
+<div>
+<p class="cdr-t02__name">{{ names[idx] }}</p>
+<p class="cdr-t02__role">{{ roles[idx] }}</p>
+</div>
+</div>
+</div>
+{% endfor %}
+{% endfor %}
+</div>
+</div>
+</div>
+{% schema %}
+{
+  "name": "T02 Infinite Marquee",
+    "settings": [
+    { "type": "text", "id": "label", "label": "Section Label", "default": "CLIENT STORIES" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "What our clients say" },
+    { "type": "text", "id": "subtitle", "label": "Subheading", "default": "From Shopify rebuilds to CRO audits — US ecommerce brands trust us to move the needle." },
+    { "type": "textarea", "id": "names", "label": "Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter|Michael Reed|Brandon Lee|Ashley Chen|Tyler Brooks|Sarah Mitchell" },
+    { "type": "textarea", "id": "roles", "label": "Roles (pipe-separated)", "default": "Founder · Custom Photo Books|Owner · Texas Baseball Co.|Marketing Director · Hudson Pecan|Founder · D2C Supplement Brand|Owner · Lone Star Apparel|CMO · Bare Supply Co.|CEO · Peak Performance Gear|Director of Ecomm · Greenfield Farms" },
+    { "type": "textarea", "id": "quotes", "label": "Quotes (pipe-separated)", "default": "Codersh built our customization flow from scratch. Conversion improved significantly within weeks.|The new site feels premium and our sales jumped by 38%. Best Shopify team we've worked with.|Site loads faster and looks significantly more polished. Our bounce rate dropped immediately.|From Figma to Shopify, the execution was flawless. They understand both design and conversion.|Zero downtime migration. The speed improvement was instant and the code is clean and maintainable.|Add-to-cart rate went up 22% after the CRO audit. Found things our own agency had missed.|Full rebuild in 6 weeks. Our team was involved at every step and the handoff was seamless.|Mobile conversion went up 31% after the redesign. The attention to mobile UX is exceptional." },
+    { "type": "textarea", "id": "avatars", "label": "Avatar URLs (pipe-separated, optional)", "default": "https://i.pravatar.cc/80?img=1|https://i.pravatar.cc/80?img=2|https://i.pravatar.cc/80?img=3" },
+    { "type": "range", "id": "speed", "label": "Scroll Speed (seconds)", "min": 20, "max": 80, "step": 5, "default": 40 },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" }
+  ]
+,
+  "presets": [{"name": "T02 Infinite Marquee"}]
+}
+{% endschema %}
+<style>#cdr-t02-{{section.id}}{--cdr-accent:{{section.settings.accent_color}};--cdr-speed:{{section.settings.speed}}s;}</style>

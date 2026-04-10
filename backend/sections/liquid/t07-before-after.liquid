@@ -1,0 +1,89 @@
+<div class="cdr-t07" id="cdr-t07-{{ section.id }}">
+<div class="cdr-t07__inner">
+<div class="cdr-t07__header">
+<p class="cdr-t07__label">{{ section.settings.label }}</p>
+<h2 class="cdr-t07__title">{{ section.settings.title }}</h2>
+<p class="cdr-t07__subtitle">{{ section.settings.subtitle }}</p>
+</div>
+{% assign names = section.settings.names | split: '|' %}
+{% assign roles = section.settings.roles | split: '|' %}
+{% assign avatars = section.settings.avatars | split: '|' %}
+<div class="cdr-t07__story-tabs" id="cdr-t07-stabs-{{ section.id }}">
+{% for name in names %}
+<button class="cdr-t07__story-tab {% if forloop.first %}cdr-t07__story-tab--active{% endif %}" data-index="{{ forloop.index0 }}">{{ name }}</button>
+{% endfor %}
+</div>
+<div class="cdr-t07__toggle-wrap">
+<div class="cdr-t07__toggle">
+<button class="cdr-t07__toggle-btn cdr-t07__toggle-btn--active" id="cdr-t07-before-{{ section.id }}" data-view="before">Before</button>
+<button class="cdr-t07__toggle-btn" id="cdr-t07-after-{{ section.id }}" data-view="after">After</button>
+</div>
+</div>
+<div class="cdr-t07__panel" id="cdr-t07-panel-{{ section.id }}"></div>
+</div>
+</div>
+{% schema %}
+{
+  "name": "T07 Before / After",
+    "settings": [
+    { "type": "text", "id": "label", "label": "Section Label", "default": "TRANSFORMATION" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "From frustration to results" },
+    { "type": "text", "id": "subtitle", "label": "Subheading", "default": "See the real shift our clients experienced." },
+    { "type": "textarea", "id": "names", "label": "Client Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter" },
+    { "type": "textarea", "id": "roles", "label": "Roles (pipe-separated)", "default": "Founder · Custom Photo Books|Owner · Texas Baseball Co.|Marketing Director · Hudson Pecan" },
+    { "type": "textarea", "id": "avatars", "label": "Avatar URLs (pipe-separated, optional)", "default": "https://i.pravatar.cc/80?img=1|https://i.pravatar.cc/80?img=2|https://i.pravatar.cc/80?img=3" },
+    { "type": "textarea", "id": "stories_json", "label": "Stories JSON", "info": "Array of: {before:{headline,body,metrics:[{label,value}]}, after:{headline,body,metrics:[{label,value}]}}", "default": "[]" },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" }
+  ]
+,
+  "presets": [{"name": "T07 Before After"}]
+}
+{% endschema %}
+<style>#cdr-t07-{{section.id}}{--cdr-accent:{{section.settings.accent_color}};}@keyframes cdr-t07-slideUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}</style>
+<script>(function() {
+var blockId = '{{ section.id }}';
+var avatars = {{ section.settings.avatars | split: '|' | json }};
+var names = {{ section.settings.names | split: '|' | json }};
+var roles = {{ section.settings.roles | split: '|' | json }};
+var storiesJSON = '{{ section.settings.stories_json | escape }}';
+var stories;
+try { stories = JSON.parse(storiesJSON.replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&amp;/g,'&')); } catch(e) { stories = []; }
+var activeStory = 0, view = 'before';
+var panel = document.getElementById('cdr-t07-panel-' + blockId);
+var stabs = document.querySelectorAll('#cdr-t07-stabs-' + blockId + ' .cdr-t07__story-tab');
+var beforeBtn = document.getElementById('cdr-t07-before-' + blockId);
+var afterBtn = document.getElementById('cdr-t07-after-' + blockId);
+function render() {
+var s = stories[activeStory];
+if (!s) return;
+var p = view === 'before' ? s.before : s.after;
+var isBefore = view === 'before';
+var badgeStyle = isBefore ? 'color:#DC2626;background:#FEF2F2' : 'color:#8DB832;background:#F0F7E6';
+var valColor = isBefore ? '#DC2626' : '#8DB832';
+var metrics = (p.metrics || []).map(function(m) {
+return '<div class="cdr-t07__metric"><span class="cdr-t07__metric-label">' + m.label + '</span><span class="cdr-t07__metric-val" style="color:' + valColor + '">' + m.value + '</span></div>';
+}).join('');
+var seeBtn = isBefore ? '<button class="cdr-t07__see-change" id="cdr-t07-seechange-' + blockId + '">See what changed →</button>' : '';
+var avatarHTML = avatars[activeStory] ? '<img src="' + avatars[activeStory] + '" alt="' + names[activeStory] + '" class="cdr-t07__author-avatar"  width="40" height="40"/>' : '<div class="cdr-t07__author-ph">' + (names[activeStory]||'')[0] + '</div>';
+panel.innerHTML = '<div class="cdr-t07__panel-grid" style="animation:cdr-t07-slideUp .28s ease-out"><div class="cdr-t07__panel-left"><span class="cdr-t07__badge" style="' + badgeStyle + '">' + (isBefore ? 'Before Codersh' : 'After Codersh') + '</span><h3 class="cdr-t07__panel-head">' + p.headline + '</h3><p class="cdr-t07__panel-body">' + p.body + '</p><div class="cdr-t07__author">' + avatarHTML + '<div><p class="cdr-t07__author-name">' + names[activeStory] + '</p><p class="cdr-t07__author-role">' + roles[activeStory] + '</p></div></div></div><div class="cdr-t07__panel-right"><div class="cdr-t07__metrics">' + metrics + '</div>' + seeBtn + '</div></div>';
+var sc = document.getElementById('cdr-t07-seechange-' + blockId);
+if (sc) sc.addEventListener('click', function() { view = 'after'; updateToggle(); render(); });
+}
+function updateToggle() {
+beforeBtn.classList.toggle('cdr-t07__toggle-btn--active', view === 'before');
+beforeBtn.classList.toggle('cdr-t07__toggle-btn--after-active', false);
+afterBtn.classList.toggle('cdr-t07__toggle-btn--active', false);
+afterBtn.classList.toggle('cdr-t07__toggle-btn--after-active', view === 'after');
+}
+stabs.forEach(function(tab) {
+tab.addEventListener('click', function() {
+stabs.forEach(function(t) { t.classList.remove('cdr-t07__story-tab--active'); });
+this.classList.add('cdr-t07__story-tab--active');
+activeStory = parseInt(this.dataset.index);
+view = 'before'; updateToggle(); render();
+});
+});
+beforeBtn.addEventListener('click', function() { view = 'before'; updateToggle(); render(); });
+afterBtn.addEventListener('click', function() { view = 'after'; updateToggle(); render(); });
+render();
+})();</script>

@@ -1,0 +1,77 @@
+<div class="cdr-t08" id="cdr-t08-{{ section.id }}">
+<div class="cdr-t08__inner">
+<div class="cdr-t08__header">
+<p class="cdr-t08__label">{{ section.settings.label }}</p>
+<h2 class="cdr-t08__title">{{ section.settings.title }}</h2>
+<p class="cdr-t08__subtitle">{{ section.settings.subtitle }}</p>
+</div>
+{% assign dates = section.settings.dates | split: '|' %}
+{% assign phases = section.settings.phases | split: '|' %}
+{% assign names = section.settings.names | split: '|' %}
+{% assign roles = section.settings.roles | split: '|' %}
+{% assign companies = section.settings.companies | split: '|' %}
+{% assign quotes = section.settings.quotes | split: '|' %}
+{% assign avatars = section.settings.avatars | split: '|' %}
+<div class="cdr-t08__timeline">
+{% for quote in quotes %}
+{% assign idx = forloop.index0 %}
+{% assign is_last = forloop.last %}
+<div class="cdr-t08__item" data-index="{{ idx }}">
+<div class="cdr-t08__line-wrap">
+<div class="cdr-t08__dot"></div>
+{% unless is_last %}<div class="cdr-t08__line"></div>{% endunless %}
+</div>
+<div class="cdr-t08__content">
+<div class="cdr-t08__meta-row">
+<span class="cdr-t08__date">{{ dates[idx] }}</span>
+<span class="cdr-t08__phase">{{ phases[idx] }}</span>
+</div>
+<div class="cdr-t08__card">
+<blockquote class="cdr-t08__quote">"{{ quote }}"</blockquote>
+<div class="cdr-t08__author">
+{% if avatars[idx] != blank %}
+<img src="{{ avatars[idx] }}" alt="{{ names[idx] }}" class="cdr-t08__avatar" loading="lazy"  width="36" height="36"/>
+{% else %}
+<div class="cdr-t08__avatar-ph">{{ names[idx] | slice: 0 }}</div>
+{% endif %}
+<div>
+<p class="cdr-t08__name">{{ names[idx] }}</p>
+<p class="cdr-t08__role">{{ roles[idx] }} · {{ companies[idx] }}</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+{% endfor %}
+</div>
+</div>
+</div>
+{% schema %}
+{
+  "name": "T08 Timeline",
+    "settings": [
+    { "type": "text", "id": "label", "label": "Section Label", "default": "THE JOURNEY" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "From first call to lasting results" },
+    { "type": "text", "id": "subtitle", "label": "Subheading", "default": "A typical Codersh project — week by week." },
+    { "type": "textarea", "id": "dates", "label": "Dates (pipe-separated)", "default": "Day 1|Week 1|Week 2–3|Week 4–5|Week 6|Month 3" },
+    { "type": "textarea", "id": "phases", "label": "Phases (pipe-separated)", "default": "Discovery call|Strategy & scope|Design & build|Review & revisions|Launch|Results check-in" },
+    { "type": "textarea", "id": "names", "label": "Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter|Michael Reed|Brandon Lee|Ashley Chen" },
+    { "type": "textarea", "id": "roles", "label": "Roles (pipe-separated)", "default": "Founder|Owner|Marketing Director|Founder|Owner|CMO" },
+    { "type": "textarea", "id": "companies", "label": "Companies (pipe-separated)", "default": "Custom Photo Books|Texas Baseball Co.|Hudson Pecan|Peak Supplements|Lone Star Apparel|Bare Supply Co." },
+    { "type": "textarea", "id": "quotes", "label": "Quotes (pipe-separated)", "default": "First call was unlike any agency call I've had. They asked about our business, not just our design preferences.|The scope doc was clear. We knew exactly what we were getting and when.|Figma mockups were on-brand from day one. Almost no revisions needed.|The dev sprint was transparent. Daily Loom updates so we knew where things stood.|Launch day was seamless. Zero downtime, everything worked first time.|Three months in, sales are up 38%. This was the best investment we made this year." },
+    { "type": "textarea", "id": "avatars", "label": "Avatar URLs (pipe-separated, optional)", "default": "https://i.pravatar.cc/80?img=1|https://i.pravatar.cc/80?img=2|https://i.pravatar.cc/80?img=3" },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" }
+  ]
+,
+  "presets": [{"name": "T08 Timeline"}]
+}
+{% endschema %}
+<style>#cdr-t08-{{section.id}}{--cdr-accent:{{section.settings.accent_color}};}@keyframes cdr-t08-fadeUp{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}</style>
+<script>(function() {
+var items = document.querySelectorAll('#cdr-t08-{{ section.id }} .cdr-t08__item');
+if (!items.length || !window.IntersectionObserver) { items.forEach(function(i){i.classList.add('cdr-t08__item--visible');}); return; }
+var obs = new IntersectionObserver(function(entries) {
+entries.forEach(function(e) { if(e.isIntersecting) e.target.classList.add('cdr-t08__item--visible'); });
+}, { threshold: 0.2 });
+items.forEach(function(item) { obs.observe(item); });
+})();</script>

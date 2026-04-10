@@ -1,0 +1,97 @@
+<div class="cdr-t10" id="cdr-t10-{{ section.id }}">
+<div class="cdr-t10__inner">
+<div class="cdr-t10__header">
+<p class="cdr-t10__label">{{ section.settings.label }}</p>
+<h2 class="cdr-t10__title">{{ section.settings.title }}</h2>
+<p class="cdr-t10__subtitle">{{ section.settings.subtitle }}</p>
+</div>
+{% assign names = section.settings.names | split: '|' %}
+{% assign roles = section.settings.roles | split: '|' %}
+{% assign companies = section.settings.companies | split: '|' %}
+{% assign quotes = section.settings.quotes | split: '|' %}
+{% assign avatars = section.settings.avatars | split: '|' %}
+{% assign featureds = section.settings.featureds | split: '|' %}
+{% assign ratings = section.settings.ratings | split: '|' %}
+<div class="cdr-t10__grid cdr-t10__grid--3col">
+{% for quote in quotes %}
+{% assign idx = forloop.index0 %}
+{% assign col_idx = idx | modulo: 3 %}
+{% assign is_featured = false %}
+{% if featureds[idx] == 'true' %}{% assign is_featured = true %}{% endif %}
+{% assign rating = ratings[idx] | default: 5 | plus: 0 %}
+<div class="cdr-t10__col-{{ col_idx }}">
+<article class="cdr-t10__card {% if is_featured %}cdr-t10__card--featured{% endif %}">
+<div class="cdr-t10__card-top">
+<div class="cdr-t10__stars">
+{% for s in (1..5) %}
+<svg class="{% if s <= rating %}cdr-t10__star--on{% else %}cdr-t10__star--off{% endif %}" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.94 3.93 4.33.63-3.13 3.05.74 4.31L8 10.77l-3.88 2.04.74-4.31L1.73 5.56l4.33-.63L8 1z"/></svg>
+{% endfor %}
+</div>
+</div>
+<blockquote class="cdr-t10__quote">"{{ quote }}"</blockquote>
+<div class="cdr-t10__author">
+{% if avatars[idx] != blank %}
+<img src="{{ avatars[idx] }}" alt="{{ names[idx] }}" class="cdr-t10__avatar" loading="lazy"  width="36" height="36"/>
+{% else %}
+<div class="cdr-t10__avatar-ph">{{ names[idx] | slice: 0 }}</div>
+{% endif %}
+<div>
+<p class="cdr-t10__name">{{ names[idx] }}</p>
+<p class="cdr-t10__role">{{ roles[idx] }} · {{ companies[idx] }}</p>
+</div>
+</div>
+</article>
+</div>
+{% endfor %}
+</div>
+<div class="cdr-t10__grid cdr-t10__grid--1col">
+{% for quote in quotes %}
+{% assign idx = forloop.index0 %}
+{% assign is_featured = false %}
+{% if featureds[idx] == 'true' %}{% assign is_featured = true %}{% endif %}
+{% assign rating = ratings[idx] | default: 5 | plus: 0 %}
+<article class="cdr-t10__card {% if is_featured %}cdr-t10__card--featured{% endif %}">
+<div class="cdr-t10__stars">
+{% for s in (1..5) %}
+<svg class="{% if s <= rating %}cdr-t10__star--on{% else %}cdr-t10__star--off{% endif %}" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.94 3.93 4.33.63-3.13 3.05.74 4.31L8 10.77l-3.88 2.04.74-4.31L1.73 5.56l4.33-.63L8 1z"/></svg>
+{% endfor %}
+</div>
+<blockquote class="cdr-t10__quote">"{{ quote }}"</blockquote>
+<div class="cdr-t10__author">
+{% if avatars[idx] != blank %}
+<img src="{{ avatars[idx] }}" alt="{{ names[idx] }}" class="cdr-t10__avatar" loading="lazy"  width="36" height="36"/>
+{% else %}
+<div class="cdr-t10__avatar-ph">{{ names[idx] | slice: 0 }}</div>
+{% endif %}
+<div>
+<p class="cdr-t10__name">{{ names[idx] }}</p>
+<p class="cdr-t10__role">{{ roles[idx] }} · {{ companies[idx] }}</p>
+</div>
+</div>
+</article>
+{% endfor %}
+</div>
+</div>
+</div>
+{% schema %}
+{
+  "name": "T10 Masonry Grid",
+    "settings": [
+    { "type": "text", "id": "label", "label": "Section Label", "default": "REVIEWS" },
+    { "type": "text", "id": "title", "label": "Heading", "default": "Loved by brands across the US" },
+    { "type": "text", "id": "subtitle", "label": "Subheading", "default": "From indie founders to established retailers — here's what they say." },
+    { "type": "textarea", "id": "names", "label": "Names (pipe-separated)", "default": "Shreyans Bajaj|James Walker|Emily Carter|Michael Reed|Brandon Lee|Ashley Chen" },
+    { "type": "textarea", "id": "roles", "label": "Roles (pipe-separated)", "default": "Founder|Owner|Marketing Director|Founder|Owner|CMO" },
+    { "type": "textarea", "id": "companies", "label": "Companies (pipe-separated)", "default": "Custom Photo Books|Texas Baseball Co.|Hudson Pecan|Peak Supplements|Lone Star Apparel|Bare Supply Co." },
+    { "type": "textarea", "id": "quotes", "label": "Quotes (pipe-separated)", "default": "Codersh built our entire customization flow from scratch. The UX is seamless and our conversion rate improved significantly within weeks. Our previous dev couldn't get this right in 8 months.|We hired Codersh for a Shopify rebuild and CRO optimization. Sales jumped by 38%.|The site loads faster and looks significantly more polished. Bounce rate dropped immediately.|From Figma to Shopify, execution was flawless.|Zero downtime migration. Clean codebase, instant speed improvement.|Add-to-cart rate went up 22% after the CRO audit." },
+    { "type": "textarea", "id": "avatars", "label": "Avatar URLs (pipe-separated, optional)", "default": "https://i.pravatar.cc/80?img=1|https://i.pravatar.cc/80?img=2|https://i.pravatar.cc/80?img=3" },
+    { "type": "textarea", "id": "featureds", "label": "Featured? true/false (pipe-separated)", "default": "true|false|false|false|false|false" },
+    { "type": "textarea", "id": "ratings", "label": "Ratings 1-5 (pipe-separated)", "default": "5|5|5|5|5|5" },
+    { "type": "color", "id": "accent_color", "label": "Accent Color", "default": "#8DB832" },
+    { "type": "color", "id": "bg_color", "label": "Background Color", "default": "#F7F9F2" }
+  ]
+,
+  "presets": [{"name": "T10 Masonry Grid"}]
+}
+{% endschema %}
+<style>#cdr-t10-{{section.id}}{--cdr-accent:{{section.settings.accent_color}};background:{{section.settings.bg_color}};}</style>

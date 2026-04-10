@@ -1,0 +1,898 @@
+{% comment %}
+  T06 – Split Stats | TAE Block
+  Schema settings count: 52
+  CSS variables: all wired via .t06-block-{{ section.id }}
+  JS: tab switcher + IntersectionObserver bar animation
+  Scoped to: .t06-block-{{ section.id }}
+  Last updated: 2026-04-09
+{% endcomment %}
+
+<section
+  class="t06-block t06-block-{{ section.id }}"
+  {{ block.shopify_attributes }}
+>
+  <div class="t06__inner">
+
+    {%- comment -%} ── Header ── {%- endcomment -%}
+    <div class="t06__header">
+      {%- if section.settings.show_label and section.settings.label_text != blank -%}
+        <p class="t06__label">{{ section.settings.label_text }}</p>
+      {%- endif -%}
+      {%- if section.settings.heading_text != blank -%}
+        <h2 class="t06__heading">{{ section.settings.heading_text }}</h2>
+      {%- endif -%}
+      {%- if section.settings.show_subheading and section.settings.subheading_text != blank -%}
+        <p class="t06__subheading">{{ section.settings.subheading_text }}</p>
+      {%- endif -%}
+    </div>
+
+    {%- comment -%} ── Split Card ── {%- endcomment -%}
+    <div class="t06__card">
+
+      {%- comment -%} ── Left: Testimonials ── {%- endcomment -%}
+      <div class="t06__left">
+
+        {%- comment -%} Tab pills — only render if >1 testimonial {%- endcomment -%}
+        {%- if section.settings.t2_name != blank -%}
+          <div class="t06__tabs" role="tablist" aria-label="Select testimonial">
+
+            <button class="t06__tab t06__tab--active" data-target="1" type="button"
+              role="tab" aria-selected="true" aria-controls="t06-panel-1-{{ section.id }}">
+              {%- if section.settings.t1_avatar != blank -%}
+                <img src="{{ section.settings.t1_avatar | image_url: width: 32 }}"
+                  alt="{{ section.settings.t1_name }}" class="t06__tab-avatar"
+                  width="24" height="24" loading="lazy"/>
+              {%- else -%}
+                <span class="t06__tab-initial" aria-hidden="true">
+                  {{ section.settings.t1_avatar_initials | default: section.settings.t1_name | slice: 0 | upcase }}
+                </span>
+              {%- endif -%}
+              {{ section.settings.t1_name }}
+            </button>
+
+            <button class="t06__tab" data-target="2" type="button"
+              role="tab" aria-selected="false" aria-controls="t06-panel-2-{{ section.id }}">
+              {%- if section.settings.t2_avatar != blank -%}
+                <img src="{{ section.settings.t2_avatar | image_url: width: 32 }}"
+                  alt="{{ section.settings.t2_name }}" class="t06__tab-avatar"
+                  width="24" height="24" loading="lazy"/>
+              {%- else -%}
+                <span class="t06__tab-initial" aria-hidden="true">
+                  {{ section.settings.t2_avatar_initials | default: section.settings.t2_name | slice: 0 | upcase }}
+                </span>
+              {%- endif -%}
+              {{ section.settings.t2_name }}
+            </button>
+
+            {%- if section.settings.t3_name != blank -%}
+              <button class="t06__tab" data-target="3" type="button"
+                role="tab" aria-selected="false" aria-controls="t06-panel-3-{{ section.id }}">
+                {%- if section.settings.t3_avatar != blank -%}
+                  <img src="{{ section.settings.t3_avatar | image_url: width: 32 }}"
+                    alt="{{ section.settings.t3_name }}" class="t06__tab-avatar"
+                    width="24" height="24" loading="lazy"/>
+                {%- else -%}
+                  <span class="t06__tab-initial" aria-hidden="true">
+                    {{ section.settings.t3_avatar_initials | default: section.settings.t3_name | slice: 0 | upcase }}
+                  </span>
+                {%- endif -%}
+                {{ section.settings.t3_name }}
+              </button>
+            {%- endif -%}
+
+          </div>
+        {%- endif -%}
+
+        {%- comment -%} Testimonial 1 {%- endcomment -%}
+        <div class="t06__panel t06__panel--active"
+          data-tab="1"
+          id="t06-panel-1-{{ section.id }}"
+          role="tabpanel"
+          aria-label="{{ section.settings.t1_name }}">
+          <blockquote class="t06__quote">
+            <span aria-hidden="true">&#8220;</span>{{ section.settings.t1_quote }}<span aria-hidden="true">&#8221;</span>
+          </blockquote>
+          <div class="t06__author">
+            {%- if section.settings.t1_avatar != blank -%}
+              <img src="{{ section.settings.t1_avatar | image_url: width: 80 }}"
+                alt="{{ section.settings.t1_name }}" class="t06__author-avatar"
+                width="48" height="48" loading="lazy"/>
+            {%- else -%}
+              <div class="t06__author-initial" aria-hidden="true">
+                {{ section.settings.t1_avatar_initials | default: section.settings.t1_name | slice: 0 | upcase }}
+              </div>
+            {%- endif -%}
+            <div>
+              <p class="t06__author-name">{{ section.settings.t1_name }}</p>
+              <p class="t06__author-meta">{{ section.settings.t1_role }} · {{ section.settings.t1_company }}</p>
+            </div>
+          </div>
+        </div>
+
+        {%- comment -%} Testimonial 2 {%- endcomment -%}
+        {%- if section.settings.t2_name != blank -%}
+          <div class="t06__panel"
+            data-tab="2"
+            id="t06-panel-2-{{ section.id }}"
+            role="tabpanel"
+            aria-label="{{ section.settings.t2_name }}">
+            <blockquote class="t06__quote">
+              <span aria-hidden="true">&#8220;</span>{{ section.settings.t2_quote }}<span aria-hidden="true">&#8221;</span>
+            </blockquote>
+            <div class="t06__author">
+              {%- if section.settings.t2_avatar != blank -%}
+                <img src="{{ section.settings.t2_avatar | image_url: width: 80 }}"
+                  alt="{{ section.settings.t2_name }}" class="t06__author-avatar"
+                  width="48" height="48" loading="lazy"/>
+              {%- else -%}
+                <div class="t06__author-initial" aria-hidden="true">
+                  {{ section.settings.t2_avatar_initials | default: section.settings.t2_name | slice: 0 | upcase }}
+                </div>
+              {%- endif -%}
+              <div>
+                <p class="t06__author-name">{{ section.settings.t2_name }}</p>
+                <p class="t06__author-meta">{{ section.settings.t2_role }} · {{ section.settings.t2_company }}</p>
+              </div>
+            </div>
+          </div>
+        {%- endif -%}
+
+        {%- comment -%} Testimonial 3 {%- endcomment -%}
+        {%- if section.settings.t3_name != blank -%}
+          <div class="t06__panel"
+            data-tab="3"
+            id="t06-panel-3-{{ section.id }}"
+            role="tabpanel"
+            aria-label="{{ section.settings.t3_name }}">
+            <blockquote class="t06__quote">
+              <span aria-hidden="true">&#8220;</span>{{ section.settings.t3_quote }}<span aria-hidden="true">&#8221;</span>
+            </blockquote>
+            <div class="t06__author">
+              {%- if section.settings.t3_avatar != blank -%}
+                <img src="{{ section.settings.t3_avatar | image_url: width: 80 }}"
+                  alt="{{ section.settings.t3_name }}" class="t06__author-avatar"
+                  width="48" height="48" loading="lazy"/>
+              {%- else -%}
+                <div class="t06__author-initial" aria-hidden="true">
+                  {{ section.settings.t3_avatar_initials | default: section.settings.t3_name | slice: 0 | upcase }}
+                </div>
+              {%- endif -%}
+              <div>
+                <p class="t06__author-name">{{ section.settings.t3_name }}</p>
+                <p class="t06__author-meta">{{ section.settings.t3_role }} · {{ section.settings.t3_company }}</p>
+              </div>
+            </div>
+          </div>
+        {%- endif -%}
+
+      </div>
+
+      {%- comment -%} ── Right: Stats ── {%- endcomment -%}
+      <div class="t06__right">
+
+        {%- if section.settings.stats_label_text != blank -%}
+          <p class="t06__stats-label">{{ section.settings.stats_label_text }}</p>
+        {%- endif -%}
+
+        <div class="t06__stats">
+
+          <div class="t06__stat">
+            <div class="t06__stat-row">
+              <span class="t06__stat-label">{{ section.settings.s1_label }}</span>
+              <span class="t06__stat-value">{{ section.settings.s1_value }}</span>
+            </div>
+            <div class="t06__bar-track">
+              <div class="t06__bar" style="--target-width: {{ section.settings.s1_bar_fill }}%"></div>
+            </div>
+          </div>
+
+          <div class="t06__stat">
+            <div class="t06__stat-row">
+              <span class="t06__stat-label">{{ section.settings.s2_label }}</span>
+              <span class="t06__stat-value">{{ section.settings.s2_value }}</span>
+            </div>
+            <div class="t06__bar-track">
+              <div class="t06__bar" style="--target-width: {{ section.settings.s2_bar_fill }}%"></div>
+            </div>
+          </div>
+
+          <div class="t06__stat{%- unless section.settings.s4_enabled %} t06__stat--last{%- endunless %}">
+            <div class="t06__stat-row">
+              <span class="t06__stat-label">{{ section.settings.s3_label }}</span>
+              <span class="t06__stat-value">{{ section.settings.s3_value }}</span>
+            </div>
+            <div class="t06__bar-track">
+              <div class="t06__bar" style="--target-width: {{ section.settings.s3_bar_fill }}%"></div>
+            </div>
+          </div>
+
+          {%- if section.settings.s4_enabled -%}
+            <div class="t06__stat t06__stat--last">
+              <div class="t06__stat-row">
+                <span class="t06__stat-label">{{ section.settings.s4_label }}</span>
+                <span class="t06__stat-value">{{ section.settings.s4_value }}</span>
+              </div>
+              <div class="t06__bar-track">
+                <div class="t06__bar" style="--target-width: {{ section.settings.s4_bar_fill }}%"></div>
+              </div>
+            </div>
+          {%- endif -%}
+
+        </div>
+
+        {%- if section.settings.show_cta and section.settings.cta_text != blank -%}
+          <a
+            href="{{ section.settings.cta_url | default: '#' }}"
+            class="t06__cta"
+          >{{ section.settings.cta_text }}{% if section.settings.cta_arrow %} &#8594;{% endif %}</a>
+        {%- endif -%}
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* ── CSS Custom Properties ─────────────────────────────────── */
+  .t06-block-{{ section.id }} {
+    --left-bg:           {{ section.settings.left_bg_color }};
+    --quote-color:       {{ section.settings.quote_text_color }};
+    --name-color:        {{ section.settings.name_color }};
+    --meta-color:        {{ section.settings.meta_color }};
+    --active-tab-bg:     {{ section.settings.active_tab_bg }};
+    --active-tab-text:   {{ section.settings.active_tab_text }};
+    --inactive-tab-bg:   {{ section.settings.inactive_tab_bg }};
+    --inactive-tab-text: {{ section.settings.inactive_tab_text }};
+    --right-bg:          {{ section.settings.right_bg_color }};
+    --stats-label-color: {{ section.settings.stats_label_color }};
+    --stat-label-color:  {{ section.settings.stat_label_color }};
+    --stat-value-color:  {{ section.settings.stat_value_color }};
+    --bar-color:         {{ section.settings.bar_color }};
+    --bar-bg:            {{ section.settings.bar_bg_color }};
+    --cta-color:         {{ section.settings.cta_color }};
+    --heading-color:     {{ section.settings.heading_color }};
+    --subheading-color:  {{ section.settings.subheading_color }};
+    --label-color:       {{ section.settings.label_color }};
+    --padding-top:       {{ section.settings.section_padding_top }}px;
+    --padding-bottom:    {{ section.settings.section_padding_bottom }}px;
+    --column-gap:        {{ section.settings.column_gap }}px;
+    --max-width:         {{ section.settings.max_width }};
+    --anim-duration:     {{ section.settings.animation_duration }}ms;
+
+    padding-top:    var(--padding-top);
+    padding-bottom: var(--padding-bottom);
+    padding-left:   1.5rem;
+    padding-right:  1.5rem;
+    box-sizing:     border-box;
+  }
+
+  /* ── Inner ─────────────────────────────────────────────────── */
+  .t06-block-{{ section.id }} .t06__inner {
+    max-width: var(--max-width);
+    margin:    0 auto;
+  }
+
+  /* ── Header ─────────────────────────────────────────────────── */
+  .t06-block-{{ section.id }} .t06__header {
+    text-align:    {{ section.settings.heading_alignment }};
+    margin-bottom: 3.5rem;
+  }
+  .t06-block-{{ section.id }} .t06__label {
+    font-size:      0.7rem;
+    font-weight:    600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color:          var(--label-color);
+    margin:         0 0 1rem;
+  }
+  .t06-block-{{ section.id }} .t06__heading {
+    font-size:      clamp(1.75rem, 4vw, 3rem);
+    font-weight:    800;
+    letter-spacing: -0.02em;
+    line-height:    1.1;
+    color:          var(--heading-color);
+    margin:         0 0 1rem;
+  }
+  .t06-block-{{ section.id }} .t06__subheading {
+    color:      var(--subheading-color);
+    font-size:  1rem;
+    max-width:  28rem;
+    margin:     0 auto;
+    line-height:1.6;
+  }
+
+  /* ── Split Card ─────────────────────────────────────────────── */
+  .t06-block-{{ section.id }} .t06__card {
+    display:       grid;
+    grid-template-columns: 1fr;
+    border-radius: 16px;
+    overflow:      hidden;
+    border:        1px solid #f1f5f9;
+    box-shadow:    0 1px 3px rgba(0,0,0,.06);
+    gap:           var(--column-gap);
+  }
+  @media (min-width: 1024px) {
+    .t06-block-{{ section.id }} .t06__card {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  /* ── Left Panel ─────────────────────────────────────────────── */
+  .t06-block-{{ section.id }} .t06__left {
+    display:        flex;
+    flex-direction: column;
+    background:     var(--left-bg);
+    padding:        2.5rem;
+  }
+
+  /* ── Tabs ───────────────────────────────────────────────────── */
+  .t06-block-{{ section.id }} .t06__tabs {
+    display:         flex;
+    flex-wrap:       wrap;
+    gap:             0.5rem;
+    margin-bottom:   2rem;
+  }
+  .t06-block-{{ section.id }} .t06__tab {
+    display:         flex;
+    align-items:     center;
+    gap:             0.5rem;
+    padding:         0.4rem 1rem;
+    border-radius:   9999px;
+    border:          1px solid rgba(255,255,255,0.15);
+    background:      var(--inactive-tab-bg);
+    color:           var(--inactive-tab-text);
+    font-size:       0.8125rem;
+    font-weight:     500;
+    cursor:          pointer;
+    font-family:     inherit;
+    transition:      background 0.2s, color 0.2s, border-color 0.2s;
+  }
+  .t06-block-{{ section.id }} .t06__tab--active {
+    background:   var(--active-tab-bg);
+    color:        var(--active-tab-text);
+    border-color: var(--active-tab-bg);
+  }
+  .t06-block-{{ section.id }} .t06__tab-avatar {
+    width:         24px;
+    height:        24px;
+    border-radius: 50%;
+    object-fit:    cover;
+    flex-shrink:   0;
+  }
+  .t06-block-{{ section.id }} .t06__tab-initial {
+    width:           24px;
+    height:          24px;
+    border-radius:   50%;
+    background:      var(--label-color);
+    color:           #fff;
+    display:         flex;
+    align-items:     center;
+    justify-content: center;
+    font-size:       0.65rem;
+    font-weight:     700;
+    flex-shrink:     0;
+  }
+
+  /* ── Panels ─────────────────────────────────────────────────── */
+  .t06-block-{{ section.id }} .t06__panel {
+    display:        none;
+    flex-direction: column;
+    justify-content:space-between;
+    flex:           1;
+    animation:      t06FadeUp-{{ section.id }} 0.3s ease-out;
+  }
+  .t06-block-{{ section.id }} .t06__panel--active {
+    display: flex;
+  }
+  @keyframes t06FadeUp-{{ section.id }} {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .t06-block-{{ section.id }} .t06__quote {
+    color:       var(--quote-color);
+    font-size:   1.0625rem;
+    font-weight: 300;
+    line-height: 1.75;
+    margin:      0 0 2.5rem;
+    font-style:  normal;
+    flex:        1;
+  }
+  .t06-block-{{ section.id }} .t06__author {
+    display:     flex;
+    align-items: center;
+    gap:         1rem;
+    padding-top: 2rem;
+    border-top:  1px solid rgba(255,255,255,0.1);
+  }
+  .t06-block-{{ section.id }} .t06__author-avatar {
+    width:         48px;
+    height:        48px;
+    border-radius: 50%;
+    object-fit:    cover;
+    outline:       1px solid rgba(255,255,255,0.2);
+    flex-shrink:   0;
+  }
+  .t06-block-{{ section.id }} .t06__author-initial {
+    width:           48px;
+    height:          48px;
+    border-radius:   50%;
+    background:      var(--label-color);
+    color:           #fff;
+    display:         flex;
+    align-items:     center;
+    justify-content: center;
+    font-size:       1.1rem;
+    font-weight:     700;
+    flex-shrink:     0;
+  }
+  .t06-block-{{ section.id }} .t06__author-name {
+    color:       var(--name-color);
+    font-weight: 600;
+    font-size:   0.875rem;
+    margin:      0 0 0.25rem;
+  }
+  .t06-block-{{ section.id }} .t06__author-meta {
+    color:     var(--meta-color);
+    font-size: 0.75rem;
+    margin:    0;
+  }
+
+  /* ── Right Panel ────────────────────────────────────────────── */
+  .t06-block-{{ section.id }} .t06__right {
+    display:        flex;
+    flex-direction: column;
+    justify-content:center;
+    gap:            2rem;
+    padding:        2.5rem;
+    background:     var(--right-bg);
+  }
+  .t06-block-{{ section.id }} .t06__stats-label {
+    font-size:      0.7rem;
+    font-weight:    600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color:          var(--stats-label-color);
+    margin:         0;
+  }
+  .t06-block-{{ section.id }} .t06__stats {
+    display:        flex;
+    flex-direction: column;
+    gap:            1.5rem;
+  }
+  .t06-block-{{ section.id }} .t06__stat {
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom:1.5rem;
+  }
+  .t06-block-{{ section.id }} .t06__stat--last {
+    border-bottom: none;
+    padding-bottom:0;
+  }
+  .t06-block-{{ section.id }} .t06__stat-row {
+    display:         flex;
+    align-items:     flex-end;
+    justify-content: space-between;
+    margin-bottom:   0.5rem;
+  }
+  .t06-block-{{ section.id }} .t06__stat-label {
+    color:     var(--stat-label-color);
+    font-size: 0.875rem;
+  }
+  .t06-block-{{ section.id }} .t06__stat-value {
+    font-size:   1.75rem;
+    font-weight: 900;
+    color:       var(--stat-value-color);
+    line-height: 1;
+  }
+  .t06-block-{{ section.id }} .t06__bar-track {
+    background:    var(--bar-bg);
+    border-radius: 9999px;
+    height:        4px;
+    overflow:      hidden;
+  }
+  .t06-block-{{ section.id }} .t06__bar {
+    height:        100%;
+    border-radius: 9999px;
+    background:    var(--bar-color);
+    width:         0;
+    {%- if section.settings.enable_bar_animation -%}
+    transition: width var(--anim-duration) ease;
+    {%- else -%}
+    width: var(--target-width);
+    {%- endif -%}
+  }
+  .t06-block-{{ section.id }} .t06__bar.t06__bar--animated {
+    width: var(--target-width);
+  }
+  .t06-block-{{ section.id }} .t06__cta {
+    font-size:   0.875rem;
+    font-weight: 600;
+    color:       var(--cta-color);
+    text-decoration: none;
+    transition:  opacity 0.2s;
+    align-self:  flex-start;
+  }
+  .t06-block-{{ section.id }} .t06__cta:hover { opacity: 0.7; }
+
+  /* ── Mobile ≤768px ──────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .t06-block-{{ section.id }} .t06__left,
+    .t06-block-{{ section.id }} .t06__right {
+      padding: 1.75rem;
+    }
+    .t06-block-{{ section.id }} .t06__stat-value {
+      font-size: 1.375rem;
+    }
+  }
+  @media (max-width: 480px) {
+    .t06-block-{{ section.id }} { padding-left: 1rem; padding-right: 1rem; }
+    .t06-block-{{ section.id }} .t06__heading { font-size: 1.625rem; }
+    .t06-block-{{ section.id }} .t06__left,
+    .t06-block-{{ section.id }} .t06__right { padding: 1.25rem; }
+  }
+</style>
+
+<script>
+(function () {
+  var root = document.querySelector('.t06-block-{{ section.id }}');
+  if (!root) return;
+
+  /* ── Tab Switcher ──────────────────────────────────────────── */
+  var tabs   = root.querySelectorAll('.t06__tab');
+  var panels = root.querySelectorAll('.t06__panel');
+
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      var target = tab.dataset.target;
+
+      tabs.forEach(function (t) {
+        t.classList.remove('t06__tab--active');
+        t.setAttribute('aria-selected', 'false');
+      });
+      panels.forEach(function (p) {
+        p.classList.remove('t06__panel--active');
+      });
+
+      tab.classList.add('t06__tab--active');
+      tab.setAttribute('aria-selected', 'true');
+
+      var panel = root.querySelector('.t06__panel[data-tab="' + target + '"]');
+      if (panel) panel.classList.add('t06__panel--active');
+    });
+  });
+
+  /* ── Bar Animation via IntersectionObserver ────────────────── */
+  var animEnabled = {{ section.settings.enable_bar_animation | json }};
+  if (!animEnabled) return;
+
+  var bars = root.querySelectorAll('.t06__bar');
+  if (!bars.length || !('IntersectionObserver' in window)) {
+    bars.forEach(function (b) { b.classList.add('t06__bar--animated'); });
+    return;
+  }
+
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('t06__bar--animated');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.3 });
+
+  bars.forEach(function (bar) { observer.observe(bar); });
+})();
+</script>
+
+{% schema %}
+{
+  "name": "T06 \u2013 Split Stats",
+    "settings": [
+    { "type": "header", "content": "Section Heading" },
+    {
+      "type": "text", "id": "label_text",
+      "label": "Eyebrow label", "default": "SUCCESS STORIES"
+    },
+    {
+      "type": "checkbox", "id": "show_label",
+      "label": "Show eyebrow label", "default": true
+    },
+    {
+      "type": "textarea", "id": "heading_text",
+      "label": "Heading", "default": "Real results, real numbers"
+    },
+    {
+      "type": "textarea", "id": "subheading_text",
+      "label": "Subheading", "default": "Behind every testimonial is a measurable outcome."
+    },
+    {
+      "type": "checkbox", "id": "show_subheading",
+      "label": "Show subheading", "default": true
+    },
+    {
+      "type": "select", "id": "heading_alignment",
+      "label": "Heading alignment",
+      "options": [
+        { "value": "left",   "label": "Left" },
+        { "value": "center", "label": "Center" },
+        { "value": "right",  "label": "Right" }
+      ],
+      "default": "center"
+    },
+    {
+      "type": "color", "id": "heading_color",
+      "label": "Heading color", "default": "#111111"
+    },
+    {
+      "type": "color", "id": "subheading_color",
+      "label": "Subheading color", "default": "#666666"
+    },
+    {
+      "type": "color", "id": "label_color",
+      "label": "Eyebrow label color", "default": "#22c55e"
+    },
+    { "type": "header", "content": "Layout & Spacing" },
+    {
+      "type": "range", "id": "section_padding_top",
+      "label": "Padding top",
+      "min": 0, "max": 120, "step": 4, "unit": "px", "default": 80
+    },
+    {
+      "type": "range", "id": "section_padding_bottom",
+      "label": "Padding bottom",
+      "min": 0, "max": 120, "step": 4, "unit": "px", "default": 80
+    },
+    {
+      "type": "range", "id": "column_gap",
+      "label": "Gap between panels",
+      "min": 0, "max": 60, "step": 4, "unit": "px", "default": 0
+    },
+    {
+      "type": "select", "id": "max_width",
+      "label": "Max content width",
+      "options": [
+        { "value": "100%",   "label": "Full width" },
+        { "value": "1400px", "label": "1400px" },
+        { "value": "1200px", "label": "1200px" },
+        { "value": "1000px", "label": "1000px" }
+      ],
+      "default": "1200px"
+    },
+
+    { "type": "header", "content": "Testimonials" },
+    {
+      "type": "text", "id": "t1_name",
+      "label": "Name", "default": "Shreyans Bajaj"
+    },
+    {
+      "type": "text", "id": "t1_role",
+      "label": "Title / Role", "default": "Founder"
+    },
+    {
+      "type": "text", "id": "t1_company",
+      "label": "Company", "default": "Custom Photo Books"
+    },
+    {
+      "type": "textarea", "id": "t1_quote",
+      "label": "Quote",
+      "default": "Codersh built our entire customization flow from scratch. What our previous dev couldn\u2019t solve in 8 months, Codersh shipped in 6 weeks \u2014 and it just works."
+    },
+    {
+      "type": "image_picker", "id": "t1_avatar",
+      "label": "Avatar image"
+    },
+    {
+      "type": "text", "id": "t1_avatar_initials",
+      "label": "Avatar initials (if no image)", "default": "SB"
+    },
+
+    {
+      "type": "text", "id": "t2_name",
+      "label": "Name", "default": "James Walker"
+    },
+    {
+      "type": "text", "id": "t2_role",
+      "label": "Title / Role", "default": "Owner"
+    },
+    {
+      "type": "text", "id": "t2_company",
+      "label": "Company", "default": "Texas Baseball Co."
+    },
+    {
+      "type": "textarea", "id": "t2_quote",
+      "label": "Quote",
+      "default": "We hired Codersh for a Shopify rebuild and CRO optimization. The new site feels premium and our sales jumped by 38%. The ROI was clear within the first month."
+    },
+    {
+      "type": "image_picker", "id": "t2_avatar",
+      "label": "Avatar image"
+    },
+    {
+      "type": "text", "id": "t2_avatar_initials",
+      "label": "Avatar initials (if no image)", "default": "JW"
+    },
+
+    {
+      "type": "text", "id": "t3_name",
+      "label": "Name", "default": "Emily Carter"
+    },
+    {
+      "type": "text", "id": "t3_role",
+      "label": "Title / Role", "default": "Marketing Director"
+    },
+    {
+      "type": "text", "id": "t3_company",
+      "label": "Company", "default": "Hudson Pecan"
+    },
+    {
+      "type": "textarea", "id": "t3_quote",
+      "label": "Quote",
+      "default": "Their attention to design and performance is unmatched. The site loads faster, looks significantly more polished, and our paid traffic finally converts."
+    },
+    {
+      "type": "image_picker", "id": "t3_avatar",
+      "label": "Avatar image"
+    },
+    {
+      "type": "text", "id": "t3_avatar_initials",
+      "label": "Avatar initials (if no image)", "default": "EC"
+    },
+
+    { "type": "header", "content": "Stats" },
+    {
+      "type": "text", "id": "stats_label_text",
+      "label": "Stats section label", "default": "IMPACT BY THE NUMBERS"
+    },
+    {
+      "type": "text", "id": "s1_label",
+      "label": "Stat 1 label", "default": "Conversion rate"
+    },
+    {
+      "type": "text", "id": "s1_value",
+      "label": "Stat 1 value", "default": "+34%"
+    },
+    {
+      "type": "range", "id": "s1_bar_fill",
+      "label": "Stat 1 bar fill",
+      "min": 0, "max": 100, "step": 1, "unit": "%", "default": 65
+    },
+    {
+      "type": "text", "id": "s2_label",
+      "label": "Stat 2 label", "default": "Avg order value"
+    },
+    {
+      "type": "text", "id": "s2_value",
+      "label": "Stat 2 value", "default": "+18%"
+    },
+    {
+      "type": "range", "id": "s2_bar_fill",
+      "label": "Stat 2 bar fill",
+      "min": 0, "max": 100, "step": 1, "unit": "%", "default": 55
+    },
+    {
+      "type": "text", "id": "s3_label",
+      "label": "Stat 3 label", "default": "Dev time saved"
+    },
+    {
+      "type": "text", "id": "s3_value",
+      "label": "Stat 3 value", "default": "8 months"
+    },
+    {
+      "type": "range", "id": "s3_bar_fill",
+      "label": "Stat 3 bar fill",
+      "min": 0, "max": 100, "step": 1, "unit": "%", "default": 80
+    },
+    {
+      "type": "checkbox", "id": "s4_enabled",
+      "label": "Show stat row 4", "default": false
+    },
+    {
+      "type": "text", "id": "s4_label",
+      "label": "Stat 4 label", "default": "Repeat purchase rate"
+    },
+    {
+      "type": "text", "id": "s4_value",
+      "label": "Stat 4 value", "default": "+12%"
+    },
+    {
+      "type": "range", "id": "s4_bar_fill",
+      "label": "Stat 4 bar fill",
+      "min": 0, "max": 100, "step": 1, "unit": "%", "default": 50
+    },
+
+    { "type": "header", "content": "Colors" },
+    {
+      "type": "color", "id": "left_bg_color",
+      "label": "Left panel background", "default": "#1a1a1a"
+    },
+    {
+      "type": "color", "id": "quote_text_color",
+      "label": "Quote text color", "default": "#ffffff"
+    },
+    {
+      "type": "color", "id": "name_color",
+      "label": "Author name color", "default": "#ffffff"
+    },
+    {
+      "type": "color", "id": "meta_color",
+      "label": "Author role color", "default": "#aaaaaa"
+    },
+    {
+      "type": "color", "id": "active_tab_bg",
+      "label": "Active tab background", "default": "#ffffff"
+    },
+    {
+      "type": "color", "id": "active_tab_text",
+      "label": "Active tab text", "default": "#000000"
+    },
+    {
+      "type": "color", "id": "inactive_tab_bg",
+      "label": "Inactive tab background", "default": "#1a1a1a"
+    },
+    {
+      "type": "color", "id": "inactive_tab_text",
+      "label": "Inactive tab text", "default": "#888888"
+    },
+    {
+      "type": "color", "id": "right_bg_color",
+      "label": "Right panel background", "default": "#f5f5f5"
+    },
+    {
+      "type": "color", "id": "stats_label_color",
+      "label": "Stats section label color", "default": "#888888"
+    },
+    {
+      "type": "color", "id": "stat_label_color",
+      "label": "Stat row label color", "default": "#444444"
+    },
+    {
+      "type": "color", "id": "stat_value_color",
+      "label": "Stat value color", "default": "#111111"
+    },
+    {
+      "type": "color", "id": "bar_color",
+      "label": "Progress bar fill color", "default": "#22c55e"
+    },
+    {
+      "type": "color", "id": "bar_bg_color",
+      "label": "Progress bar track color", "default": "#e5e5e5"
+    },
+    {
+      "type": "color", "id": "cta_color",
+      "label": "CTA link color", "default": "#22c55e"
+    },
+
+    { "type": "header", "content": "CTA & Animation" },
+    {
+      "type": "checkbox", "id": "show_cta",
+      "label": "Show CTA link", "default": true
+    },
+    {
+      "type": "text", "id": "cta_text",
+      "label": "CTA text", "default": "View full case study"
+    },
+    {
+      "type": "url", "id": "cta_url",
+      "label": "CTA URL"
+    },
+    {
+      "type": "checkbox", "id": "cta_arrow",
+      "label": "Show arrow (\u2192)", "default": true
+    },
+    {
+      "type": "checkbox", "id": "enable_bar_animation",
+      "label": "Animate progress bars on scroll", "default": true
+    },
+    {
+      "type": "range", "id": "animation_duration",
+      "label": "Bar animation duration",
+      "min": 300, "max": 2000, "step": 100, "unit": "ms", "default": 1000
+    },
+    {
+      "type": "checkbox", "id": "enable_fade_in",
+      "label": "Fade in tab panels", "default": true
+    }
+  ]
+,
+  "presets": [{"name": "T06 Split Stats"}]
+}
+{% endschema %}
