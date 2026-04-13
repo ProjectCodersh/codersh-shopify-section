@@ -1,0 +1,405 @@
+/* ============================================================
+   cws-t05.css — T05 Center Carousel | Codersh Sections
+   ============================================================ */
+
+/* ── Base ──────────────────────────────────────────────────── */
+.t05 {
+  background: var(--t05-bg, #080d1a);
+  overflow: hidden;
+  box-sizing: border-box;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+  font-family: var(--t05-body-font, inherit);
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.t05__header {
+  text-align: var(--t05-heading-align, center);
+  margin-bottom: 3.5rem;
+  max-width: var(--t05-max-w, 900px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.t05__eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--t05-eyebrow-color, #8db832);
+  margin: 0 0 1rem;
+  font-family: var(--t05-body-font, inherit);
+}
+
+.t05__heading {
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  color: var(--t05-heading-color, #ffffff);
+  margin: 0 0 1rem;
+  font-family: var(--t05-heading-font, inherit);
+}
+
+.t05__subheading {
+  font-size: 1rem;
+  color: var(--t05-subheading-color, #94a3b8);
+  line-height: 1.6;
+  margin: 0;
+  max-width: 520px;
+  margin-inline: auto;
+}
+
+/* ── Carousel Track ─────────────────────────────────────────── */
+.t05__track {
+  position: relative;
+  height: var(--t05-track-h, 384px);
+  max-width: var(--t05-max-w, 900px);
+  margin: 0 auto;
+  perspective: 1200px;
+  touch-action: pan-y;
+}
+
+/* ── Cards ──────────────────────────────────────────────────── */
+.t05__card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--t05-card-w, 320px);
+  max-width: 90vw;
+  transform: translateX(-50%) translateY(-50%);
+  border-radius: var(--t05-card-radius, 16px);
+  border: 1px solid var(--t05-card-border-s, #1a2035);
+  background: var(--t05-card-bg-side, #131825);
+  cursor: pointer;
+  outline: none;
+  transition:
+    transform 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    opacity   0.45s ease,
+    box-shadow 0.45s ease,
+    z-index   0s;
+  user-select: none;
+  will-change: transform, opacity;
+}
+
+/* Position states */
+.t05__card[data-pos="center"] {
+  transform: translateX(-50%) translateY(-50%) scale(1);
+  opacity: 1;
+  z-index: 10;
+  border-color: var(--t05-card-border-c, #2e3650);
+  background: var(--t05-card-bg-center, #1e2333);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.04);
+  cursor: default;
+}
+
+.t05__card[data-pos="left"] {
+  transform: translateX(calc(-50% - var(--t05-offset, 200px))) translateY(-44%) scale(0.82);
+  opacity: 0.55;
+  z-index: 5;
+}
+
+.t05__card[data-pos="right"] {
+  transform: translateX(calc(-50% + var(--t05-offset, 200px))) translateY(-44%) scale(0.82);
+  opacity: 0.55;
+  z-index: 5;
+}
+
+.t05__card[data-pos="hidden"] {
+  transform: translateX(-50%) translateY(-44%) scale(0.7);
+  opacity: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Side cards are clickable */
+.t05__card[data-pos="left"],
+.t05__card[data-pos="right"] {
+  cursor: pointer;
+}
+
+.t05__card[data-pos="left"]:hover,
+.t05__card[data-pos="right"]:hover {
+  opacity: 0.75;
+}
+
+/* No animation mode */
+.t05[data-animations="false"] .t05__card {
+  transition: none;
+}
+
+/* ── Card Inner ─────────────────────────────────────────────── */
+.t05__card-inner {
+  padding: 1.75rem 1.75rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* ── Stars ──────────────────────────────────────────────────── */
+.t05__stars {
+  display: flex;
+  gap: 3px;
+}
+
+.t05__star {
+  width: 15px;
+  height: 15px;
+  fill: rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+  transition: fill 0.2s;
+}
+
+.t05__star--on {
+  fill: var(--t05-star-color, #f59e0b);
+}
+
+/* ── Quote ──────────────────────────────────────────────────── */
+.t05__quote {
+  font-size: 0.95rem;
+  line-height: 1.65;
+  color: var(--t05-quote-color, #e2e8f0);
+  margin: 0;
+  font-style: normal;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-family: var(--t05-body-font, inherit);
+}
+
+/* ── Badge ──────────────────────────────────────────────────── */
+.t05__badge-wrap {
+  display: flex;
+}
+
+.t05__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 99px;
+  background: var(--t05-badge-bg, #0f172a);
+  color: var(--t05-badge-color, #cbd5e1);
+  border: 1px solid var(--t05-badge-border, #2e3650);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* ── Author ─────────────────────────────────────────────────── */
+.t05__author {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: auto;
+}
+
+.t05__avatar-wrap {
+  flex-shrink: 0;
+}
+
+.t05__avatar-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.t05__avatar-initial {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--t05-dot-active, #8db832);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.t05__author-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.t05__name {
+  margin: 0 0 2px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--t05-name-color, #ffffff);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.t05__role {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--t05-role-color, #94a3b8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Controls ───────────────────────────────────────────────── */
+.t05__controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  margin-top: 2rem;
+  max-width: var(--t05-max-w, 900px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Arrows ─────────────────────────────────────────────────── */
+.t05__arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--t05-arrow-bg, #111827);
+  border: 1px solid var(--t05-arrow-border, #2e3650);
+  color: var(--t05-arrow-icon, #ffffff);
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s, border-color 0.2s;
+  flex-shrink: 0;
+}
+
+.t05__arrow:hover {
+  background: var(--t05-dot-active, #8db832);
+  border-color: var(--t05-dot-active, #8db832);
+  transform: scale(1.08);
+}
+
+.t05__arrow:active {
+  transform: scale(0.95);
+}
+
+.t05__arrow svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Dots ───────────────────────────────────────────────────── */
+.t05__dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.t05__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--t05-dot-inactive, #2e3650);
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: width 0.3s ease, background 0.3s ease;
+  flex-shrink: 0;
+}
+
+.t05__dot--active {
+  width: 24px;
+  background: var(--t05-dot-active, #8db832);
+}
+
+/* ── Empty State ────────────────────────────────────────────── */
+.t05__empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 0.9rem;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .t05 {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .t05__header {
+    margin-bottom: 2.5rem;
+  }
+
+  .t05__subheading {
+    font-size: 0.9rem;
+  }
+
+  /* On mobile: single card, swipe to navigate */
+  .t05__track {
+    height: auto;
+    min-height: 280px;
+    perspective: none;
+    overflow: hidden;
+    display: flex;
+    align-items: stretch;
+    position: relative;
+  }
+
+  .t05__card {
+    position: relative;
+    top: auto;
+    left: auto;
+    transform: none !important;
+    width: 100%;
+    max-width: 100%;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    display: none;
+  }
+
+  .t05__card[data-pos="center"] {
+    opacity: 1;
+    pointer-events: auto;
+    display: block;
+    box-shadow: none;
+  }
+
+  .t05__card-inner {
+    padding: 1.5rem;
+  }
+
+  .t05__quote {
+    -webkit-line-clamp: 6;
+    font-size: 0.9rem;
+  }
+
+  .t05__controls {
+    margin-top: 1.5rem;
+    gap: 1rem;
+  }
+
+  .t05__arrow {
+    width: 38px;
+    height: 38px;
+  }
+
+  .t05__arrow svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .t05__card-inner {
+    padding: 1.25rem;
+  }
+
+  .t05__quote {
+    font-size: 0.875rem;
+  }
+}

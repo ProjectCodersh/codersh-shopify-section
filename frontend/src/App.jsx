@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import "./App.css";
+import { SECTION_PREVIEWS } from "./SectionPreviews";
 
 const BACKEND_URL = "http://localhost:3000";
 
@@ -134,6 +135,22 @@ const IconGridOff = () => (
     <line x1="8" y1="11" x2="14" y2="11" />
   </svg>
 );
+const IconExternalLink = () => (
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    <polyline points="15 3 21 3 21 9" />
+    <line x1="10" y1="14" x2="21" y2="3" />
+  </svg>
+);
 
 /* ── Section Card ───────────────────────────────────────────────────── */
 function SectionCard({
@@ -143,16 +160,25 @@ function SectionCard({
   installing,
   removing,
   installed,
+  themeEditorUrl,
 }) {
   const isInstalling = installing === section.id;
   const isRemoving = removing === section.id;
   const isInstalled = installed.includes(section.id);
   const bgColor = CATEGORY_COLORS[section.category] || CATEGORY_COLORS.default;
+  const PreviewComponent = SECTION_PREVIEWS[section.id];
 
   return (
     <div className={`section-card${isInstalled ? " is-installed" : ""}`}>
-      <div className="section-preview" style={{ background: bgColor }}>
-        <span className="section-preview-letter">{section.name[0]}</span>
+      <div
+        className={`section-preview${PreviewComponent ? " has-preview" : ""}`}
+        style={PreviewComponent ? {} : { background: bgColor }}
+      >
+        {PreviewComponent ? (
+          <PreviewComponent />
+        ) : (
+          <span className="section-preview-letter">{section.name[0]}</span>
+        )}
         <span className="section-category-badge">{section.category}</span>
         {isInstalled && (
           <span className="installed-badge">
@@ -165,21 +191,29 @@ function SectionCard({
         <p>{section.description}</p>
         <div className="card-actions">
           {isInstalled ? (
-            <button
-              onClick={() => onRemove(section)}
-              disabled={isRemoving}
-              className={`remove-btn${isRemoving ? " loading" : ""}`}
-            >
-              {isRemoving ? (
-                <>
-                  <span className="spinner spinner-dark" /> Removing…
-                </>
-              ) : (
-                <>
-                  <IconTrash /> Remove from Theme
-                </>
-              )}
-            </button>
+            <>
+              <a
+                href={themeEditorUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="editor-btn"
+              >
+                <IconExternalLink /> Open Theme Editor
+              </a>
+              <button
+                onClick={() => onRemove(section)}
+                disabled={isRemoving}
+                className={`remove-btn-icon${isRemoving ? " loading" : ""}`}
+                title="Remove from theme"
+                aria-label="Remove from theme"
+              >
+                {isRemoving ? (
+                  <span className="spinner spinner-dark" />
+                ) : (
+                  <IconTrash />
+                )}
+              </button>
+            </>
           ) : (
             <button
               onClick={() => !isInstalled && onInstall(section)}
@@ -228,16 +262,22 @@ export default function App() {
   const [message, setMessage] = useState(null);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
+  const [themeEditorUrl, setThemeEditorUrl] = useState("#");
 
   useEffect(() => {
-    axios
-      .get(`${BACKEND_URL}/sections`)
-      .then((res) => {
-        setSections(res.data);
-        const alreadyInstalled = res.data
+    // Fetch sections and shop info in parallel
+    Promise.all([
+      axios.get(`${BACKEND_URL}/sections`),
+      axios.get(`${BACKEND_URL}/store-info`),
+    ])
+      .then(([sectionsRes, storeRes]) => {
+        setSections(sectionsRes.data);
+        const alreadyInstalled = sectionsRes.data
           .filter((s) => s.installed)
           .map((s) => s.id);
         setInstalled(alreadyInstalled);
+        const shop = storeRes.data.shop;
+        setThemeEditorUrl(`https://${shop}/admin/themes/current/editor`);
         setLoading(false);
       })
       .catch(() => {
@@ -265,7 +305,9 @@ export default function App() {
       setInstalled((prev) => [...prev, section.id]);
       setMessage({
         type: "success",
-        text: `"${section.name}" added to your theme! Go to Theme Editor → Add section to use it.`,
+        text: `"${section.name}" added! Go to Theme Editor → Add section to place it on your page.`,
+        link: themeEditorUrl,
+        linkText: "Open Theme Editor →",
       });
     } catch (err) {
       setMessage({
@@ -354,7 +396,19 @@ export default function App() {
           <span className="message-icon">
             {message.type === "success" ? <IconSuccess /> : <IconAlert />}
           </span>
-          <span className="message-text">{message.text}</span>
+          <span className="message-text">
+            {message.text}
+            {message.link && (
+              <a
+                href={message.link}
+                target="_blank"
+                rel="noreferrer"
+                className="message-link"
+              >
+                {message.linkText}
+              </a>
+            )}
+          </span>
           <button className="message-dismiss" aria-label="Dismiss">
             <IconX size={13} />
           </button>
@@ -420,6 +474,7 @@ export default function App() {
               installing={installing}
               removing={removing}
               installed={installed}
+              themeEditorUrl={themeEditorUrl}
             />
           ))}
           {filtered.length === 0 && (

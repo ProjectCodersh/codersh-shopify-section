@@ -34,9 +34,14 @@ const SECTIONS = [
   {
     id: "cws-t05-center-carousel",
     name: "Center Carousel",
-    description: "Centered testimonial carousel with navigation.",
+    description:
+      "Centered testimonial carousel — add each card individually with image picker.",
     category: "Testimonials",
-    file: "t05-center-carousel.liquid",
+    file: "cws-t05-center-carousel.liquid",
+    assets: [
+      { file: "cws-t05.css", key: "assets/cws-t05.css" },
+      { file: "cws-t05.js", key: "assets/cws-t05.js" },
+    ],
   },
   {
     id: "cws-t06-split-stats",
@@ -80,4 +85,12 @@ function getSectionLiquid(filename) {
   return fs.readFileSync(filePath, "utf8");
 }
 
-module.exports = { SECTIONS, getSectionLiquid };
+function getSectionAssets(assets) {
+  if (!assets || assets.length === 0) return [];
+  return assets.map((asset) => ({
+    key: asset.key,
+    value: fs.readFileSync(path.join(__dirname, "assets", asset.file), "utf8"),
+  }));
+}
+
+module.exports = { SECTIONS, getSectionLiquid, getSectionAssets };

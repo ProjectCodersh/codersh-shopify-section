@@ -3,7 +3,11 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 const { PrismaClient } = require("@prisma/client");
-const { SECTIONS, getSectionLiquid } = require("./sections/index");
+const {
+  SECTIONS,
+  getSectionLiquid,
+  getSectionAssets,
+} = require("./sections/index");
 
 const app = express();
 const prisma = new PrismaClient();
@@ -18,14 +22,18 @@ app.get("/", (req, res) => {
   res.json({ message: "Codersh Sections backend is running!" });
 });
 
-// Get all sections + installed state for this shop
+// Returns the shop domain so the frontend can build theme editor links
+app.get("/store-info", (_req, res) => {
+  res.json({ shop: SHOP });
+});
+
+// Get all sections + installed state
 app.get("/sections", async (req, res) => {
   try {
     const installed = await prisma.installedSection.findMany({
       where: { shop: SHOP },
     });
     const installedIds = installed.map((i) => i.sectionId);
-
     res.json(
       SECTIONS.map((s) => ({
         id: s.id,
@@ -73,6 +81,21 @@ app.post("/inject-section", async (req, res) => {
       },
     );
 
+    // Inject asset files (CSS, JS) if any  ← THIS is where it belongs
+    const assets = getSectionAssets(section.assets || []);
+    for (const asset of assets) {
+      await axios.put(
+        `https://${SHOP}/admin/api/2024-01/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: asset.key, value: asset.value } },
+        {
+          headers: {
+            "X-Shopify-Access-Token": TOKEN,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    }
+
     // Save to database
     await prisma.installedSection.upsert({
       where: { shop_sectionId: { shop: SHOP, sectionId: section.id } },
@@ -85,9 +108,10 @@ app.post("/inject-section", async (req, res) => {
       message: `"${section.name}" added to your theme!`,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: error.message, details: error.response?.data });
+    res.status(500).json({
+      error: error.message,
+      details: error.response?.data,
+    });
   }
 });
 
@@ -99,7 +123,6 @@ app.delete("/remove-section", async (req, res) => {
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
 
-    // Get active theme
     const themesResponse = await axios.get(
       `https://${SHOP}/admin/api/2024-01/themes.json`,
       { headers: { "X-Shopify-Access-Token": TOKEN } },
@@ -108,11 +131,22 @@ app.delete("/remove-section", async (req, res) => {
       (t) => t.role === "main",
     );
 
-    // Delete from theme
+    // Delete liquid from theme
     await axios.delete(
       `https://${SHOP}/admin/api/2024-01/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
       { headers: { "X-Shopify-Access-Token": TOKEN } },
     );
+
+    // Delete asset files too if any
+    const assets = section.assets || [];
+    for (const asset of assets) {
+      await axios
+        .delete(
+          `https://${SHOP}/admin/api/2024-01/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
+          { headers: { "X-Shopify-Access-Token": TOKEN } },
+        )
+        .catch(() => {}); // ignore if already deleted
+    }
 
     // Remove from database
     await prisma.installedSection.delete({

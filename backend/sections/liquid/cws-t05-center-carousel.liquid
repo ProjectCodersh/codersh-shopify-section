@@ -1,0 +1,493 @@
+{% comment %}
+  T05 – Center Carousel | Codersh Sections
+  Multi-file version: liquid + cws-t05.css + cws-t05.js
+  Each card is a block — use "Add card" in theme editor
+{% endcomment %}
+
+{{ 'cws-t05.css' | asset_url | stylesheet_tag }}
+
+<div
+  class="t05 t05--{{ section.id }}"
+  id="t05-{{ section.id }}"
+  data-section-id="{{ section.id }}"
+  data-animations="{{ section.settings.enable_animations }}"
+>
+
+  {%- comment -%} ── Section Heading ── {%- endcomment -%}
+  {%- if section.settings.eyebrow_text != blank or section.settings.heading_text != blank -%}
+    <div class="t05__header">
+      {%- if section.settings.eyebrow_text != blank -%}
+        <p class="t05__eyebrow">{{ section.settings.eyebrow_text }}</p>
+      {%- endif -%}
+      {%- if section.settings.heading_text != blank -%}
+        <h2 class="t05__heading">{{ section.settings.heading_text }}</h2>
+      {%- endif -%}
+      {%- if section.settings.subheading_text != blank -%}
+        <p class="t05__subheading">{{ section.settings.subheading_text }}</p>
+      {%- endif -%}
+    </div>
+  {%- endif -%}
+
+  {%- if section.blocks.size > 0 -%}
+    {%- assign last_idx = section.blocks.size | minus: 1 -%}
+
+    {%- comment -%} ── Carousel Track ── {%- endcomment -%}
+    <div class="t05__track" role="region" aria-label="Client testimonials carousel">
+      {%- for block in section.blocks -%}
+        {%- liquid
+          if forloop.index0 == 0
+            assign init_pos = 'center'
+          elsif forloop.index0 == 1
+            assign init_pos = 'right'
+          elsif forloop.index0 == last_idx
+            assign init_pos = 'left'
+          else
+            assign init_pos = 'hidden'
+          endif
+          assign rating_val = block.settings.star_rating | plus: 0
+          if rating_val == 0
+            assign rating_val = 5
+          endif
+        -%}
+        <article
+          class="t05__card"
+          data-index="{{ forloop.index0 }}"
+          data-pos="{{ init_pos }}"
+          aria-label="Testimonial from {{ block.settings.name | default: 'Customer' }}"
+          {{ block.shopify_attributes }}
+        >
+          <div class="t05__card-inner">
+
+            {%- comment -%} Stars {%- endcomment -%}
+            <div class="t05__stars" role="img" aria-label="{{ rating_val }} out of 5 stars">
+              {%- for s in (1..5) -%}
+                <svg class="t05__star{% if s <= rating_val %} t05__star--on{% endif %}" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M8 1l1.94 3.93 4.33.63-3.13 3.05.74 4.31L8 10.77l-3.88 2.04.74-4.31L1.73 5.56l4.33-.63L8 1z"/>
+                </svg>
+              {%- endfor -%}
+            </div>
+
+            {%- comment -%} Quote {%- endcomment -%}
+            {%- if block.settings.quote != blank -%}
+              <blockquote class="t05__quote">&#8220;{{ block.settings.quote }}&#8221;</blockquote>
+            {%- endif -%}
+
+            {%- comment -%} Metric badge {%- endcomment -%}
+            {%- if block.settings.metric_badge != blank -%}
+              <div class="t05__badge-wrap">
+                <span class="t05__badge">{{ block.settings.metric_badge }}</span>
+              </div>
+            {%- endif -%}
+
+            {%- comment -%} Author {%- endcomment -%}
+            <div class="t05__author">
+              <div class="t05__avatar-wrap">
+                {%- if block.settings.avatar != blank -%}
+                  <img
+                    src="{{ block.settings.avatar | image_url: width: 80 }}"
+                    alt="{{ block.settings.name }}"
+                    class="t05__avatar-img"
+                    width="40" height="40"
+                    loading="lazy"
+                  />
+                {%- else -%}
+                  <div class="t05__avatar-initial" aria-hidden="true">
+                    {{ block.settings.name | slice: 0 | upcase }}
+                  </div>
+                {%- endif -%}
+              </div>
+              <div class="t05__author-meta">
+                <p class="t05__name">{{ block.settings.name }}</p>
+                <p class="t05__role">
+                  {{- block.settings.role -}}
+                  {%- if block.settings.company != blank -%}&nbsp;&middot;&nbsp;{{ block.settings.company }}{%- endif -%}
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </article>
+      {%- endfor -%}
+    </div>
+
+    {%- comment -%} ── Navigation Controls ── {%- endcomment -%}
+    <div class="t05__controls">
+      <button class="t05__arrow t05__arrow--prev" type="button" aria-label="Previous testimonial">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+
+      <div class="t05__dots" role="tablist" aria-label="Testimonial navigation">
+        {%- for block in section.blocks -%}
+          <button
+            class="t05__dot{% if forloop.first %} t05__dot--active{% endif %}"
+            data-index="{{ forloop.index0 }}"
+            role="tab"
+            type="button"
+            aria-selected="{% if forloop.first %}true{% else %}false{% endif %}"
+            aria-label="Go to testimonial {{ forloop.index }}"
+          ></button>
+        {%- endfor -%}
+      </div>
+
+      <button class="t05__arrow t05__arrow--next" type="button" aria-label="Next testimonial">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+        </svg>
+      </button>
+    </div>
+
+  {%- else -%}
+    <p class="t05__empty">Click "Add card" in the sidebar to add your first testimonial.</p>
+  {%- endif -%}
+
+</div>
+
+{%- comment -%} ── CSS Variables scoped to this section instance ── {%- endcomment -%}
+<style>
+  #t05-{{ section.id }} {
+    --t05-bg:               {{ section.settings.section_bg }};
+    --t05-eyebrow-color:    {{ section.settings.eyebrow_color }};
+    --t05-heading-color:    {{ section.settings.heading_color }};
+    --t05-subheading-color: {{ section.settings.subheading_color }};
+    --t05-card-bg-center:   {{ section.settings.card_bg_center }};
+    --t05-card-bg-side:     {{ section.settings.card_bg_side }};
+    --t05-card-border-c:    {{ section.settings.card_border_center }};
+    --t05-card-border-s:    {{ section.settings.card_border_side }};
+    --t05-card-radius:      {{ section.settings.card_border_radius }}px;
+    --t05-card-w:           {{ section.settings.card_width }}px;
+    --t05-offset:           {{ section.settings.side_card_offset }}px;
+    --t05-track-h:          {{ section.settings.carousel_height }}px;
+    --t05-star-color:       {{ section.settings.star_color }};
+    --t05-quote-color:      {{ section.settings.quote_color }};
+    --t05-name-color:       {{ section.settings.name_color }};
+    --t05-role-color:       {{ section.settings.role_color }};
+    --t05-badge-bg:         {{ section.settings.badge_bg }};
+    --t05-badge-color:      {{ section.settings.badge_color }};
+    --t05-badge-border:     {{ section.settings.badge_border }};
+    --t05-arrow-bg:         {{ section.settings.arrow_bg }};
+    --t05-arrow-border:     {{ section.settings.arrow_border }};
+    --t05-arrow-icon:       {{ section.settings.arrow_icon_color }};
+    --t05-dot-active:       {{ section.settings.dot_active_color }};
+    --t05-dot-inactive:     {{ section.settings.dot_inactive_color }};
+    --t05-max-w:            {{ section.settings.section_max_width }};
+    padding-top:            {{ section.settings.padding_top }}px;
+    padding-bottom:         {{ section.settings.padding_bottom }}px;
+    {%- if section.settings.use_custom_font -%}
+    --t05-heading-font: {{ section.settings.heading_font_family.family }}, {{ section.settings.heading_font_family.fallback_families }};
+    --t05-body-font:    {{ section.settings.body_font_family.family }}, {{ section.settings.body_font_family.fallback_families }};
+    {%- endif -%}
+  }
+  #t05-{{ section.id }} .t05__heading {
+    font-size: {{ section.settings.heading_size }};
+  }
+  @media (max-width: 767px) {
+    #t05-{{ section.id }} {
+      padding-top:    {{ section.settings.mobile_padding_top }}px;
+      padding-bottom: {{ section.settings.mobile_padding_bottom }}px;
+    }
+    #t05-{{ section.id }} .t05__heading {
+      font-size: {{ section.settings.mobile_heading_size }}px;
+    }
+  }
+  {%- if section.settings.custom_css != blank -%}
+    {{ section.settings.custom_css }}
+  {%- endif -%}
+</style>
+
+<script src="{{ 'cws-t05.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "T05 Center Carousel",
+  "settings": [
+    { "type": "header", "content": "Section Heading" },
+    {
+      "type": "text",
+      "id": "eyebrow_text",
+      "label": "Eyebrow label",
+      "default": "Client Reviews"
+    },
+    {
+      "type": "color",
+      "id": "eyebrow_color",
+      "label": "Eyebrow color",
+      "default": "#8DB832"
+    },
+    {
+      "type": "textarea",
+      "id": "heading_text",
+      "label": "Heading",
+      "default": "What our clients say"
+    },
+    {
+      "type": "color",
+      "id": "heading_color",
+      "label": "Heading color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "select",
+      "id": "heading_size",
+      "label": "Heading size",
+      "options": [
+        { "value": "2rem",   "label": "Small (32px)" },
+        { "value": "3rem",   "label": "Medium (48px)" },
+        { "value": "4rem",   "label": "Large (64px)" }
+      ],
+      "default": "3rem"
+    },
+    {
+      "type": "textarea",
+      "id": "subheading_text",
+      "label": "Subheading",
+      "default": "Trusted by high-growth Shopify brands."
+    },
+    {
+      "type": "color",
+      "id": "subheading_color",
+      "label": "Subheading color",
+      "default": "#94a3b8"
+    },
+    {
+      "type": "select",
+      "id": "heading_alignment",
+      "label": "Heading alignment",
+      "options": [
+        { "value": "left",   "label": "Left" },
+        { "value": "center", "label": "Center" },
+        { "value": "right",  "label": "Right" }
+      ],
+      "default": "center"
+    },
+
+    { "type": "header", "content": "Colors" },
+    { "type": "color", "id": "section_bg",        "label": "Section background",      "default": "#080d1a" },
+    { "type": "color", "id": "card_bg_center",     "label": "Center card background",  "default": "#1e2333" },
+    { "type": "color", "id": "card_bg_side",       "label": "Side card background",    "default": "#131825" },
+    { "type": "color", "id": "card_border_center", "label": "Center card border",      "default": "#2e3650" },
+    { "type": "color", "id": "card_border_side",   "label": "Side card border",        "default": "#1a2035" },
+    { "type": "color", "id": "quote_color",        "label": "Quote text color",        "default": "#e2e8f0" },
+    { "type": "color", "id": "star_color",         "label": "Star color",              "default": "#f59e0b" },
+    { "type": "color", "id": "name_color",         "label": "Author name color",       "default": "#ffffff" },
+    { "type": "color", "id": "role_color",         "label": "Author role color",       "default": "#94a3b8" },
+    { "type": "color", "id": "badge_bg",           "label": "Badge background",        "default": "#0f172a" },
+    { "type": "color", "id": "badge_color",        "label": "Badge text color",        "default": "#cbd5e1" },
+    { "type": "color", "id": "badge_border",       "label": "Badge border color",      "default": "#2e3650" },
+    { "type": "color", "id": "arrow_bg",           "label": "Arrow background",        "default": "#111827" },
+    { "type": "color", "id": "arrow_border",       "label": "Arrow border",            "default": "#2e3650" },
+    { "type": "color", "id": "arrow_icon_color",   "label": "Arrow icon color",        "default": "#ffffff" },
+    { "type": "color", "id": "dot_active_color",   "label": "Active dot color",        "default": "#8DB832" },
+    { "type": "color", "id": "dot_inactive_color", "label": "Inactive dot color",      "default": "#2e3650" },
+
+    { "type": "header", "content": "Layout" },
+    {
+      "type": "range", "id": "padding_top",
+      "label": "Padding top",
+      "min": 0, "max": 120, "step": 4, "unit": "px", "default": 96
+    },
+    {
+      "type": "range", "id": "padding_bottom",
+      "label": "Padding bottom",
+      "min": 0, "max": 120, "step": 4, "unit": "px", "default": 96
+    },
+    {
+      "type": "select",
+      "id": "section_max_width",
+      "label": "Max carousel width",
+      "options": [
+        { "value": "100%",   "label": "Full width" },
+        { "value": "1200px", "label": "1200px" },
+        { "value": "1000px", "label": "1000px" },
+        { "value": "900px",  "label": "900px" },
+        { "value": "780px",  "label": "780px" }
+      ],
+      "default": "900px"
+    },
+    {
+      "type": "range", "id": "carousel_height",
+      "label": "Carousel height (desktop)",
+      "min": 280, "max": 560, "step": 8, "unit": "px", "default": 384
+    },
+    {
+      "type": "range", "id": "card_width",
+      "label": "Card width",
+      "min": 240, "max": 416, "step": 8, "unit": "px", "default": 320
+    },
+    {
+      "type": "range", "id": "side_card_offset",
+      "label": "Side card offset",
+      "min": 100, "max": 320, "step": 5, "unit": "px", "default": 200
+    },
+    {
+      "type": "range", "id": "card_border_radius",
+      "label": "Card corner radius",
+      "min": 0, "max": 32, "step": 2, "unit": "px", "default": 16
+    },
+
+    { "type": "header", "content": "Typography & Animation" },
+    {
+      "type": "checkbox", "id": "use_custom_font",
+      "label": "Use custom fonts", "default": false
+    },
+    {
+      "type": "font_picker", "id": "heading_font_family",
+      "label": "Heading font", "default": "assistant_n7"
+    },
+    {
+      "type": "font_picker", "id": "body_font_family",
+      "label": "Body / quote font", "default": "assistant_n4"
+    },
+    {
+      "type": "checkbox", "id": "enable_animations",
+      "label": "Enable slide & fade transitions", "default": true
+    },
+
+    { "type": "header", "content": "Mobile" },
+    {
+      "type": "range", "id": "mobile_padding_top",
+      "label": "Mobile padding top",
+      "min": 0, "max": 80, "step": 4, "unit": "px", "default": 48
+    },
+    {
+      "type": "range", "id": "mobile_padding_bottom",
+      "label": "Mobile padding bottom",
+      "min": 0, "max": 80, "step": 4, "unit": "px", "default": 48
+    },
+    {
+      "type": "range", "id": "mobile_heading_size",
+      "label": "Mobile heading size",
+      "min": 20, "max": 48, "step": 2, "unit": "px", "default": 28
+    },
+
+    { "type": "header", "content": "Custom CSS" },
+    {
+      "type": "textarea", "id": "custom_css",
+      "label": "Custom CSS (optional)"
+    }
+  ],
+  "blocks": [
+    {
+      "type": "testimonial_card",
+      "name": "Testimonial Card",
+      "settings": [
+        { "type": "header", "content": "Quote" },
+        {
+          "type": "textarea",
+          "id": "quote",
+          "label": "Testimonial quote",
+          "default": "This product completely transformed how we work. The results were immediate and impressive."
+        },
+        {
+          "type": "select",
+          "id": "star_rating",
+          "label": "Star rating",
+          "options": [
+            { "value": "5", "label": "★★★★★ — 5 stars" },
+            { "value": "4", "label": "★★★★☆ — 4 stars" },
+            { "value": "3", "label": "★★★☆☆ — 3 stars" },
+            { "value": "2", "label": "★★☆☆☆ — 2 stars" },
+            { "value": "1", "label": "★☆☆☆☆ — 1 star" }
+          ],
+          "default": "5"
+        },
+        {
+          "type": "text",
+          "id": "metric_badge",
+          "label": "Metric badge (optional)",
+          "info": "e.g. +38% sales, Conversions up, Zero downtime",
+          "placeholder": "+38% sales"
+        },
+        { "type": "header", "content": "Author" },
+        {
+          "type": "text",
+          "id": "name",
+          "label": "Full name",
+          "default": "Alex Johnson"
+        },
+        {
+          "type": "text",
+          "id": "role",
+          "label": "Job title",
+          "default": "Founder"
+        },
+        {
+          "type": "text",
+          "id": "company",
+          "label": "Company name",
+          "default": "Acme Store"
+        },
+        {
+          "type": "image_picker",
+          "id": "avatar",
+          "label": "Author photo",
+          "info": "Recommended: 80×80px square image"
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "name": "T05 Center Carousel",
+      "blocks": [
+        {
+          "type": "testimonial_card",
+          "settings": {
+            "quote": "Codersh built our entire customization flow from scratch. Conversion improved significantly within weeks of launch.",
+            "star_rating": "5",
+            "metric_badge": "Conversions up",
+            "name": "Shreyans Bajaj",
+            "role": "Founder",
+            "company": "Custom Photo Books"
+          }
+        },
+        {
+          "type": "testimonial_card",
+          "settings": {
+            "quote": "The new Shopify site feels premium and our sales jumped 38%. Best dev investment we've made.",
+            "star_rating": "5",
+            "metric_badge": "+38% sales",
+            "name": "James Walker",
+            "role": "Owner",
+            "company": "Texas Baseball Co."
+          }
+        },
+        {
+          "type": "testimonial_card",
+          "settings": {
+            "quote": "Their attention to design and performance is unmatched. The site loads faster and looks significantly more polished.",
+            "star_rating": "5",
+            "metric_badge": "Score 51 → 94",
+            "name": "Emily Carter",
+            "role": "Marketing Director",
+            "company": "Hudson Pecan"
+          }
+        },
+        {
+          "type": "testimonial_card",
+          "settings": {
+            "quote": "From Figma to Shopify, the execution was flawless. They understand design and conversion at the same level.",
+            "star_rating": "5",
+            "metric_badge": "Figma → Live in 5wk",
+            "name": "Michael Reed",
+            "role": "Founder",
+            "company": "D2C Supplement Brand"
+          }
+        },
+        {
+          "type": "testimonial_card",
+          "settings": {
+            "quote": "Zero downtime migration. Clean code, instant speed improvement, and our team can actually maintain it now.",
+            "star_rating": "5",
+            "metric_badge": "Zero downtime",
+            "name": "Brandon Lee",
+            "role": "Owner",
+            "company": "Lone Star Apparel"
+          }
+        }
+      ]
+    }
+  ]
+}
+{% endschema %}
