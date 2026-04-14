@@ -1,10 +1,12 @@
 -- CreateTable
 CREATE TABLE "InstalledSection" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "shop" TEXT NOT NULL,
     "sectionId" TEXT NOT NULL,
     "sectionName" TEXT NOT NULL,
-    "installedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "installedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "InstalledSection_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex

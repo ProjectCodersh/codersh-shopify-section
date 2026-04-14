@@ -1,0 +1,18 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "ae556ad0a8d99425d0dd891c6190563a"
+name = "Codersh-Sections"
+application_url = "http://localhost:3000"
+embedded = false
+
+[build]
+automatically_update_urls_on_dev = true
+
+[webhooks]
+api_version = "2026-07"
+
+[access_scopes]
+scopes = "write_themes,read_themes"
+
+[auth]
+redirect_urls = [ "http://localhost:3000/auth/callback" ]
