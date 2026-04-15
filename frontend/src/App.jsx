@@ -5,6 +5,11 @@ import { SECTION_PREVIEWS } from "./SectionPreviews";
 
 const BACKEND_URL = "http://localhost:3000";
 
+// Read the ?shop= param from the URL.
+// Shopify passes this automatically when loading an embedded app.
+// For local dev, open the frontend at: http://localhost:5173?shop=your-store.myshopify.com
+const SHOP = new URLSearchParams(window.location.search).get("shop") || "";
+
 const CATEGORY_COLORS = {
   Testimonials: "linear-gradient(135deg, #667eea, #764ba2)",
   Media: "linear-gradient(135deg, #f093fb, #f5576c)",
@@ -267,8 +272,8 @@ export default function App() {
   useEffect(() => {
     // Fetch sections and shop info in parallel
     Promise.all([
-      axios.get(`${BACKEND_URL}/sections`),
-      axios.get(`${BACKEND_URL}/store-info`),
+      axios.get(`${BACKEND_URL}/sections?shop=${SHOP}`),
+      axios.get(`${BACKEND_URL}/store-info?shop=${SHOP}`),
     ])
       .then(([sectionsRes, storeRes]) => {
         setSections(sectionsRes.data);
@@ -301,6 +306,7 @@ export default function App() {
     try {
       await axios.post(`${BACKEND_URL}/inject-section`, {
         sectionId: section.id,
+        shop: SHOP,
       });
       setInstalled((prev) => [...prev, section.id]);
       setMessage({
@@ -323,7 +329,7 @@ export default function App() {
     setMessage(null);
     try {
       await axios.delete(`${BACKEND_URL}/remove-section`, {
-        data: { sectionId: section.id },
+        data: { sectionId: section.id, shop: SHOP },
       });
       setInstalled((prev) => prev.filter((id) => id !== section.id));
       setMessage({

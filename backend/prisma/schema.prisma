@@ -2,14 +2,10 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// ── Local development database (SQLite) ──────────────────────────────────────
-// Switch to postgresql + Supabase URL when deploying to production.
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
-
-// ── Active models ─────────────────────────────────────────────────────────────
 
 model InstalledSection {
   id          String   @id @default(cuid())
@@ -21,15 +17,9 @@ model InstalledSection {
   @@unique([shop, sectionId])
 }
 
-// =============================================================================
-// PRODUCTION model — needed for OAuth multi-store sessions.
-// Uncomment when switching to PostgreSQL for deployment.
-// =============================================================================
-//
-// model Session {
-//   id          String   @id @default(cuid())
-//   shop        String   @unique
-//   accessToken String
-//   createdAt   DateTime @default(now())
-// }
-// =============================================================================
+model Session {
+  id          String   @id @default(cuid())
+  shop        String   @unique
+  accessToken String
+  createdAt   DateTime @default(now())
+}
