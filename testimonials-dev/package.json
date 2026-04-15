@@ -1,5 +1,5 @@
 {
-  "name": "custom-store-sections",
+  "name": "testimonials-dev",
   "private": true,
   "scripts": {
     "build": "react-router build",
