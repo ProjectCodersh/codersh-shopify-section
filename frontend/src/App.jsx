@@ -3,7 +3,7 @@ import axios from "axios";
 import "./App.css";
 import { SECTION_PREVIEWS } from "./SectionPreviews";
 
-const BACKEND_URL = "http://localhost:3000";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
 
 // Read the ?shop= param from the URL.
 // Shopify passes this automatically when loading an embedded app.
