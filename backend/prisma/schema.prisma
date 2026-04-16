@@ -19,8 +19,9 @@ model InstalledSection {
 }
 
 model Session {
-  id          String   @id @default(cuid())
-  shop        String   @unique
+  id          String    @id @default(cuid())
+  shop        String    @unique
   accessToken String
-  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
 }

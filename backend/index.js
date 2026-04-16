@@ -76,18 +76,23 @@ app.get("/auth/callback", async (req, res) => {
   if (digest !== hmac) return res.status(403).send("HMAC validation failed");
 
   try {
-    // Exchange the one-time code for a permanent access token
+    // Exchange the one-time code for an access token
     const tokenResponse = await axios.post(
       `https://${shop}/admin/oauth/access_token`,
       { client_id: API_KEY, client_secret: API_SECRET, code },
     );
-    const accessToken = tokenResponse.data.access_token;
+    const { access_token: accessToken, expires_in } = tokenResponse.data;
+
+    // Shopify now issues expiring offline tokens — store the expiry if provided
+    const expiresAt = expires_in
+      ? new Date(Date.now() + expires_in * 1000)
+      : null;
 
     // Save (or update) this shop's session in the database
     await prisma.session.upsert({
       where: { shop },
-      update: { accessToken },
-      create: { shop, accessToken },
+      update: { accessToken, expiresAt },
+      create: { shop, accessToken, expiresAt },
     });
 
     // Redirect merchant to the app dashboard
@@ -130,6 +135,15 @@ async function requireSession(req, res, next) {
   if (!session) {
     return res.status(401).json({
       error: "Not installed",
+      authUrl: `${HOST}/auth?shop=${shop}`,
+    });
+  }
+
+  // If the token has expired, force the merchant to re-authorise
+  if (session.expiresAt && session.expiresAt < new Date()) {
+    await prisma.session.delete({ where: { shop } });
+    return res.status(401).json({
+      error: "Access token expired — please reinstall the app",
       authUrl: `${HOST}/auth?shop=${shop}`,
     });
   }
@@ -178,7 +192,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     // Get active theme
     const themesResponse = await axios.get(
-      `https://${shop}/admin/api/2025-01/themes.json`,
+      `https://${shop}/admin/api/2026-07/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const activeTheme = themesResponse.data.themes.find(
@@ -189,7 +203,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     // Inject liquid file
     await axios.put(
-      `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`,
+      `https://${shop}/admin/api/2026-07/themes/${activeTheme.id}/assets.json`,
       { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
       {
         headers: {
@@ -203,7 +217,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const assets = getSectionAssets(section.assets || []);
     for (const asset of assets) {
       await axios.put(
-        `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`,
+        `https://${shop}/admin/api/2026-07/themes/${activeTheme.id}/assets.json`,
         { asset: { key: asset.key, value: asset.value } },
         {
           headers: {
@@ -250,7 +264,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     if (!section) return res.status(404).json({ error: "Section not found" });
 
     const themesResponse = await axios.get(
-      `https://${shop}/admin/api/2025-01/themes.json`,
+      `https://${shop}/admin/api/2026-07/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const activeTheme = themesResponse.data.themes.find(
@@ -259,7 +273,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
 
     // Delete liquid from theme
     await axios.delete(
-      `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
+      `https://${shop}/admin/api/2026-07/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
 
@@ -267,7 +281,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     for (const asset of section.assets || []) {
       await axios
         .delete(
-          `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
+          `https://${shop}/admin/api/2026-07/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
           { headers: { "X-Shopify-Access-Token": token } },
         )
         .catch(() => {}); // ignore if already deleted
