@@ -15,4 +15,7 @@ api_version = "2026-07"
 scopes = "write_themes,read_themes"
 
 [auth]
-redirect_urls = [ "https://codersh-shopify-section-backend.onrender.com/auth/callback" ]
+redirect_urls = [
+  "https://codersh-shopify-section-backend.onrender.com/auth/callback",
+  "http://localhost:3000/auth/callback"
+]

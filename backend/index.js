@@ -45,7 +45,14 @@ app.get("/auth", (req, res) => {
     `&state=${state}` +
     `&redirect_uri=${redirectUri}`;
 
-  res.cookie("state", state, { httpOnly: true });
+  // secure + sameSite are required for the cookie to survive the cross-site
+  // redirect from Shopify back to this callback on HTTPS (Render).
+  const isHttps = HOST.startsWith("https");
+  res.cookie("state", state, {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: isHttps ? "none" : "lax",
+  });
   res.redirect(installUrl);
 });
 
@@ -96,16 +103,19 @@ app.get("/auth/callback", async (req, res) => {
   }
 });
 
-// ── Dev helper: seed a local session so you can test without OAuth ─────────────
-// Visit http://localhost:3000/dev-login while running locally.
+// ── Dev helper: seed a session for any store so you can test without OAuth ──────
+// Default (no params): seeds the store from .env
+//   http://localhost:3000/dev-login
+// Custom store+token (to seed a second dev store):
+//   http://localhost:3000/dev-login?shop=other-store.myshopify.com&token=shpat_xxx
 // REMOVE THIS before going to production.
-app.get("/dev-login", async (_req, res) => {
-  const shop = process.env.SHOP;
-  const accessToken = process.env.SHOPIFY_ACCESS_TOKEN;
+app.get("/dev-login", async (req, res) => {
+  const shop = req.query.shop || process.env.SHOP;
+  const accessToken = req.query.token || process.env.SHOPIFY_ACCESS_TOKEN;
   if (!shop || !accessToken)
     return res
       .status(500)
-      .json({ error: "SHOP or SHOPIFY_ACCESS_TOKEN not set in .env" });
+      .json({ error: "Provide ?shop= and ?token= params, or set SHOP + SHOPIFY_ACCESS_TOKEN in .env" });
 
   await prisma.session.upsert({
     where: { shop },
