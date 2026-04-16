@@ -107,12 +107,10 @@ app.get("/dev-login", async (req, res) => {
   const shop = req.query.shop || process.env.SHOP;
   const accessToken = req.query.token || process.env.SHOPIFY_ACCESS_TOKEN;
   if (!shop || !accessToken)
-    return res
-      .status(500)
-      .json({
-        error:
-          "Provide ?shop= and ?token= params, or set SHOP + SHOPIFY_ACCESS_TOKEN in .env",
-      });
+    return res.status(500).json({
+      error:
+        "Provide ?shop= and ?token= params, or set SHOP + SHOPIFY_ACCESS_TOKEN in .env",
+    });
 
   await prisma.session.upsert({
     where: { shop },
@@ -293,3 +291,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`),
 );
+
+// false commit to trigger redeploy after .env change
