@@ -316,9 +316,10 @@ export default function App() {
         linkText: "Open Theme Editor →",
       });
     } catch (err) {
+      const detail = err.response?.data?.error || err.response?.data?.details || err.message;
       setMessage({
         type: "error",
-        text: `Failed to add "${section.name}". Try again.`,
+        text: `Failed to add "${section.name}": ${detail}`,
       });
     }
     setInstalling(null);
@@ -337,9 +338,10 @@ export default function App() {
         text: `"${section.name}" removed from your theme.`,
       });
     } catch (err) {
+      const detail = err.response?.data?.error || err.message;
       setMessage({
         type: "error",
-        text: `Failed to remove "${section.name}". Try again.`,
+        text: `Failed to remove "${section.name}": ${detail}`,
       });
     }
     setRemoving(null);

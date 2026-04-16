@@ -173,7 +173,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     // Get active theme
     const themesResponse = await axios.get(
-      `https://${shop}/admin/api/2024-01/themes.json`,
+      `https://${shop}/admin/api/2025-01/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const activeTheme = themesResponse.data.themes.find(
@@ -184,7 +184,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     // Inject liquid file
     await axios.put(
-      `https://${shop}/admin/api/2024-01/themes/${activeTheme.id}/assets.json`,
+      `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`,
       { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
       {
         headers: {
@@ -198,7 +198,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const assets = getSectionAssets(section.assets || []);
     for (const asset of assets) {
       await axios.put(
-        `https://${shop}/admin/api/2024-01/themes/${activeTheme.id}/assets.json`,
+        `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`,
         { asset: { key: asset.key, value: asset.value } },
         {
           headers: {
@@ -237,7 +237,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     if (!section) return res.status(404).json({ error: "Section not found" });
 
     const themesResponse = await axios.get(
-      `https://${shop}/admin/api/2024-01/themes.json`,
+      `https://${shop}/admin/api/2025-01/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const activeTheme = themesResponse.data.themes.find(
@@ -246,7 +246,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
 
     // Delete liquid from theme
     await axios.delete(
-      `https://${shop}/admin/api/2024-01/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
+      `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
 
@@ -254,7 +254,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     for (const asset of section.assets || []) {
       await axios
         .delete(
-          `https://${shop}/admin/api/2024-01/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
+          `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
           { headers: { "X-Shopify-Access-Token": token } },
         )
         .catch(() => {}); // ignore if already deleted
