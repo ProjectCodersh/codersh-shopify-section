@@ -270,6 +270,13 @@ export default function App() {
   const [themeEditorUrl, setThemeEditorUrl] = useState("#");
 
   useEffect(() => {
+    // If no shop in URL, nothing to load
+    if (!SHOP) {
+      setMessage({ type: "error", text: "No shop parameter in URL." });
+      setLoading(false);
+      return;
+    }
+
     // Fetch sections and shop info in parallel
     Promise.all([
       axios.get(`${BACKEND_URL}/sections?shop=${SHOP}`),
@@ -285,7 +292,13 @@ export default function App() {
         setThemeEditorUrl(`https://${shop}/admin/themes/current/editor`);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        // 401 means the app isn't installed on this store yet —
+        // redirect to the OAuth install flow so Shopify can authorize it.
+        if (err.response?.status === 401 && err.response?.data?.authUrl) {
+          window.location.href = err.response.data.authUrl;
+          return;
+        }
         setMessage({
           type: "error",
           text: "Could not load sections. Is the backend running?",
