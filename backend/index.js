@@ -46,7 +46,8 @@ app.get("/auth", (req, res) => {
     `?client_id=${API_KEY}` +
     `&scope=${SCOPES}` +
     `&state=${state}` +
-    `&redirect_uri=${redirectUri}`;
+    `&redirect_uri=${redirectUri}` +
+    `&grant_options[]=offline`;
 
   res.redirect(installUrl);
 });
