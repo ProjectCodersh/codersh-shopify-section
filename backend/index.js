@@ -14,10 +14,11 @@ const {
 const app = express();
 const prisma = new PrismaClient();
 
-const API_KEY    = process.env.SHOPIFY_API_KEY;
+const API_KEY = process.env.SHOPIFY_API_KEY;
 const API_SECRET = process.env.SHOPIFY_API_SECRET;
-const SCOPES     = process.env.SCOPES || "write_themes,read_themes";
-const HOST       = process.env.HOST   || "http://localhost:3000";
+const SCOPES = process.env.SCOPES || "write_themes,read_themes";
+const HOST = process.env.HOST || "http://localhost:3000";
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 app.use(cors());
 app.use(express.json());
@@ -35,9 +36,9 @@ app.get("/auth", (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).send("Missing shop parameter");
 
-  const state       = crypto.randomBytes(16).toString("hex");
+  const state = crypto.randomBytes(16).toString("hex");
   const redirectUri = `${HOST}/auth/callback`;
-  const installUrl  =
+  const installUrl =
     `https://${shop}/admin/oauth/authorize` +
     `?client_id=${API_KEY}` +
     `&scope=${SCOPES}` +
@@ -61,8 +62,14 @@ app.get("/auth/callback", async (req, res) => {
   // Verify HMAC signature from Shopify
   const map = { ...req.query };
   delete map.hmac;
-  const message = Object.keys(map).sort().map((k) => `${k}=${map[k]}`).join("&");
-  const digest  = crypto.createHmac("sha256", API_SECRET).update(message).digest("hex");
+  const message = Object.keys(map)
+    .sort()
+    .map((k) => `${k}=${map[k]}`)
+    .join("&");
+  const digest = crypto
+    .createHmac("sha256", API_SECRET)
+    .update(message)
+    .digest("hex");
   if (digest !== hmac) return res.status(403).send("HMAC validation failed");
 
   try {
@@ -75,13 +82,15 @@ app.get("/auth/callback", async (req, res) => {
 
     // Save (or update) this shop's session in the database
     await prisma.session.upsert({
-      where:  { shop },
+      where: { shop },
       update: { accessToken },
       create: { shop, accessToken },
     });
 
     // Redirect merchant to the app dashboard
-    res.redirect(`${HOST}/app?shop=${shop}`);
+    // res.redirect(`${HOST}/app?shop=${shop}`);     ---old
+    const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+    res.redirect(`${FRONTEND_URL}?shop=${shop}`);
   } catch (error) {
     res.status(500).send("OAuth error: " + error.message);
   }
@@ -91,13 +100,15 @@ app.get("/auth/callback", async (req, res) => {
 // Visit http://localhost:3000/dev-login while running locally.
 // REMOVE THIS before going to production.
 app.get("/dev-login", async (_req, res) => {
-  const shop        = process.env.SHOP;
+  const shop = process.env.SHOP;
   const accessToken = process.env.SHOPIFY_ACCESS_TOKEN;
   if (!shop || !accessToken)
-    return res.status(500).json({ error: "SHOP or SHOPIFY_ACCESS_TOKEN not set in .env" });
+    return res
+      .status(500)
+      .json({ error: "SHOP or SHOPIFY_ACCESS_TOKEN not set in .env" });
 
   await prisma.session.upsert({
-    where:  { shop },
+    where: { shop },
     update: { accessToken },
     create: { shop, accessToken },
   });
@@ -118,7 +129,7 @@ async function requireSession(req, res, next) {
     });
   }
 
-  req.shop  = shop;
+  req.shop = shop;
   req.token = session.accessToken;
   next();
 }
@@ -165,7 +176,9 @@ app.post("/inject-section", requireSession, async (req, res) => {
       `https://${shop}/admin/api/2024-01/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
-    const activeTheme = themesResponse.data.themes.find((t) => t.role === "main");
+    const activeTheme = themesResponse.data.themes.find(
+      (t) => t.role === "main",
+    );
     if (!activeTheme)
       return res.status(404).json({ error: "No active theme found" });
 
@@ -198,14 +211,19 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     // Save to database
     await prisma.installedSection.upsert({
-      where:  { shop_sectionId: { shop, sectionId: section.id } },
+      where: { shop_sectionId: { shop, sectionId: section.id } },
       update: { installedAt: new Date() },
       create: { shop, sectionId: section.id, sectionName: section.name },
     });
 
-    res.json({ success: true, message: `"${section.name}" added to your theme!` });
+    res.json({
+      success: true,
+      message: `"${section.name}" added to your theme!`,
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message, details: error.response?.data });
+    res
+      .status(500)
+      .json({ error: error.message, details: error.response?.data });
   }
 });
 
@@ -222,7 +240,9 @@ app.delete("/remove-section", requireSession, async (req, res) => {
       `https://${shop}/admin/api/2024-01/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
-    const activeTheme = themesResponse.data.themes.find((t) => t.role === "main");
+    const activeTheme = themesResponse.data.themes.find(
+      (t) => t.role === "main",
+    );
 
     // Delete liquid from theme
     await axios.delete(
@@ -231,7 +251,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     );
 
     // Delete asset files too if any
-    for (const asset of (section.assets || [])) {
+    for (const asset of section.assets || []) {
       await axios
         .delete(
           `https://${shop}/admin/api/2024-01/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
@@ -245,7 +265,10 @@ app.delete("/remove-section", requireSession, async (req, res) => {
       where: { shop_sectionId: { shop, sectionId: section.id } },
     });
 
-    res.json({ success: true, message: `"${section.name}" removed from your theme.` });
+    res.json({
+      success: true,
+      message: `"${section.name}" removed from your theme.`,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
