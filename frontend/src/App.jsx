@@ -329,10 +329,13 @@ export default function App() {
         linkText: "Open Theme Editor →",
       });
     } catch (err) {
-      const detail = err.response?.data?.error || err.response?.data?.details || err.message;
+      const shopifyMsg = err.response?.data?.shopifyError?.errors
+        || err.response?.data?.shopifyError?.error
+        || err.response?.data?.error
+        || err.message;
       setMessage({
         type: "error",
-        text: `Failed to add "${section.name}": ${detail}`,
+        text: `Failed to add "${section.name}": ${typeof shopifyMsg === "object" ? JSON.stringify(shopifyMsg) : shopifyMsg}`,
       });
     }
     setInstalling(null);

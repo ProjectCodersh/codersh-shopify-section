@@ -2,7 +2,6 @@ require("dotenv").config();
 const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
-const cookieParser = require("cookie-parser");
 const axios = require("axios");
 const { PrismaClient } = require("@prisma/client");
 const {
@@ -20,9 +19,13 @@ const SCOPES = process.env.SCOPES || "write_themes,read_themes";
 const HOST = process.env.HOST || "http://localhost:3000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
+// In-memory state store: shop -> state string.
+// Replaces cookie-based state — cookies are unreliable across the
+// Shopify OAuth redirect on HTTPS proxies like Render.
+const oauthStateMap = new Map();
+
 app.use(cors());
 app.use(express.json());
-app.use(cookieParser());
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 app.get("/", (_req, res) => {
@@ -30,13 +33,13 @@ app.get("/", (_req, res) => {
 });
 
 // ── OAuth Step 1: begin install ───────────────────────────────────────────────
-// Shopify calls this when a merchant clicks "Install" on the app listing.
-// We redirect the merchant's browser to Shopify's authorization page.
 app.get("/auth", (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).send("Missing shop parameter");
 
   const state = crypto.randomBytes(16).toString("hex");
+  oauthStateMap.set(shop, state); // store by shop — no cookies needed
+
   const redirectUri = `${HOST}/auth/callback`;
   const installUrl =
     `https://${shop}/admin/oauth/authorize` +
@@ -45,24 +48,17 @@ app.get("/auth", (req, res) => {
     `&state=${state}` +
     `&redirect_uri=${redirectUri}`;
 
-  // secure + sameSite are required for the cookie to survive the cross-site
-  // redirect from Shopify back to this callback on HTTPS (Render).
-  const isHttps = HOST.startsWith("https");
-  res.cookie("state", state, {
-    httpOnly: true,
-    secure: isHttps,
-    sameSite: isHttps ? "none" : "lax",
-  });
   res.redirect(installUrl);
 });
 
 // ── OAuth Step 2: callback — exchange code for access token ───────────────────
-// Shopify redirects back here after the merchant approves the install.
 app.get("/auth/callback", async (req, res) => {
   const { shop, code, hmac, state } = req.query;
 
-  // Verify the state cookie matches (prevents CSRF)
-  if (state !== req.cookies.state) {
+  // Verify state matches what we stored for this shop
+  const savedState = oauthStateMap.get(shop);
+  oauthStateMap.delete(shop); // one-time use
+  if (!savedState || state !== savedState) {
     return res.status(403).send("State mismatch — possible CSRF attack");
   }
 
@@ -95,8 +91,6 @@ app.get("/auth/callback", async (req, res) => {
     });
 
     // Redirect merchant to the app dashboard
-    // res.redirect(`${HOST}/app?shop=${shop}`);     ---old
-    const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
     res.redirect(`${FRONTEND_URL}?shop=${shop}`);
   } catch (error) {
     res.status(500).send("OAuth error: " + error.message);
@@ -115,7 +109,10 @@ app.get("/dev-login", async (req, res) => {
   if (!shop || !accessToken)
     return res
       .status(500)
-      .json({ error: "Provide ?shop= and ?token= params, or set SHOP + SHOPIFY_ACCESS_TOKEN in .env" });
+      .json({
+        error:
+          "Provide ?shop= and ?token= params, or set SHOP + SHOPIFY_ACCESS_TOKEN in .env",
+      });
 
   await prisma.session.upsert({
     where: { shop },
@@ -231,9 +228,17 @@ app.post("/inject-section", requireSession, async (req, res) => {
       message: `"${section.name}" added to your theme!`,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: error.message, details: error.response?.data });
+    // Log full Shopify error to Render logs so we can diagnose scope issues
+    console.error("[inject-section] Error:", error.message);
+    console.error(
+      "[inject-section] Shopify response:",
+      JSON.stringify(error.response?.data),
+    );
+    res.status(500).json({
+      error: error.message,
+      shopifyError: error.response?.data,
+      shopifyStatus: error.response?.status,
+    });
   }
 });
 
