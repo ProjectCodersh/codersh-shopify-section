@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import "./App.css";
 import { SECTION_PREVIEWS } from "./SectionPreviews";
+import { useAppBridge } from "@shopify/app-bridge-react";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
 
@@ -259,6 +260,7 @@ function SkeletonCard() {
 
 /* ── App ────────────────────────────────────────────────────────────── */
 export default function App() {
+  const app = useAppBridge();
   const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState(null);
@@ -268,6 +270,21 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const [themeEditorUrl, setThemeEditorUrl] = useState("#");
+
+  // Attach Shopify session token to every axios request (Token Exchange auth)
+  useEffect(() => {
+    if (!app) return;
+    const interceptor = axios.interceptors.request.use(async (config) => {
+      try {
+        const token = await app.idToken();
+        if (token) config.headers["X-Shopify-Session-Token"] = token;
+      } catch {
+        // Not in embedded context (e.g. local dev) — skip
+      }
+      return config;
+    });
+    return () => axios.interceptors.request.eject(interceptor);
+  }, [app]);
 
   useEffect(() => {
     // If no shop in URL, nothing to load
