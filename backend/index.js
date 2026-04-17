@@ -84,10 +84,10 @@ app.get("/auth/callback", async (req, res) => {
     );
     const { access_token: accessToken, expires_in } = tokenResponse.data;
 
-    // Shopify now issues expiring offline tokens — store the expiry if provided
+    // Use Shopify-provided expiry; fall back to 30 days for testing (offline tokens don't expire)
     const expiresAt = expires_in
       ? new Date(Date.now() + expires_in * 1000)
-      : null;
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     // Save (or update) this shop's session in the database
     await prisma.session.upsert({
@@ -118,10 +118,11 @@ app.get("/dev-login", async (req, res) => {
         "Provide ?shop= and ?token= params, or set SHOP + SHOPIFY_ACCESS_TOKEN in .env",
     });
 
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   await prisma.session.upsert({
     where: { shop },
-    update: { accessToken },
-    create: { shop, accessToken },
+    update: { accessToken, expiresAt },
+    create: { shop, accessToken, expiresAt },
   });
   res.json({ success: true, message: `Dev session seeded for ${shop}` });
 });
