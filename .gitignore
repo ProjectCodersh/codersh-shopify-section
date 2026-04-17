@@ -61,3 +61,6 @@ desktop.ini
 .cache/
 .temp/
 .tmp/
+
+
+*.md

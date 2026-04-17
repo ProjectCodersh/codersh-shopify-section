@@ -317,11 +317,15 @@ app.delete("/remove-section", requireSession, async (req, res) => {
       (t) => t.role === "main",
     );
 
-    // Delete liquid from theme
-    await axios.delete(
-      `https://${shop}/admin/api/2026-04/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
-      { headers: { "X-Shopify-Access-Token": token } },
-    );
+    // Delete liquid from theme (ignore 404 — file may not exist in theme)
+    await axios
+      .delete(
+        `https://${shop}/admin/api/2026-04/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
+        { headers: { "X-Shopify-Access-Token": token } },
+      )
+      .catch((err) => {
+        if (err.response?.status !== 404) throw err;
+      });
 
     // Delete asset files too if any
     for (const asset of section.assets || []) {
@@ -333,10 +337,12 @@ app.delete("/remove-section", requireSession, async (req, res) => {
         .catch(() => {}); // ignore if already deleted
     }
 
-    // Remove from database
-    await prisma.installedSection.delete({
-      where: { shop_sectionId: { shop, sectionId: section.id } },
-    });
+    // Remove from database (ignore if record doesn't exist)
+    await prisma.installedSection
+      .delete({
+        where: { shop_sectionId: { shop, sectionId: section.id } },
+      })
+      .catch(() => {});
 
     res.json({
       success: true,
