@@ -46,8 +46,7 @@ app.get("/auth", (req, res) => {
     `?client_id=${API_KEY}` +
     `&scope=${SCOPES}` +
     `&state=${state}` +
-    `&redirect_uri=${redirectUri}` +
-    `&grant_options[]=offline`;
+    `&redirect_uri=${redirectUri}`;
 
   res.redirect(installUrl);
 });
@@ -82,18 +81,18 @@ app.get("/auth/callback", async (req, res) => {
       `https://${shop}/admin/oauth/access_token`,
       { client_id: API_KEY, client_secret: API_SECRET, code },
     );
-    const { access_token: accessToken, expires_in } = tokenResponse.data;
+    const { access_token: accessToken, refresh_token: refreshToken, expires_in } = tokenResponse.data;
 
-    // Use Shopify-provided expiry; fall back to 30 days for testing (offline tokens don't expire)
+    // Use Shopify-provided expiry; fall back to 24h if somehow missing
     const expiresAt = expires_in
       ? new Date(Date.now() + expires_in * 1000)
-      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      : new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     // Save (or update) this shop's session in the database
     await prisma.session.upsert({
       where: { shop },
-      update: { accessToken, expiresAt },
-      create: { shop, accessToken, expiresAt },
+      update: { accessToken, refreshToken: refreshToken || null, expiresAt },
+      create: { shop, accessToken, refreshToken: refreshToken || null, expiresAt },
     });
 
     // Redirect merchant to the app dashboard
@@ -141,13 +140,37 @@ async function requireSession(req, res, next) {
     });
   }
 
-  // If the token has expired, force the merchant to re-authorise
-  if (session.expiresAt && session.expiresAt < new Date()) {
-    await prisma.session.delete({ where: { shop } });
-    return res.status(401).json({
-      error: "Access token expired — please reinstall the app",
-      authUrl: `${HOST}/auth?shop=${shop}`,
-    });
+  // Refresh the token if it expires within the next 5 minutes
+  if (session.expiresAt && session.expiresAt < new Date(Date.now() + 5 * 60 * 1000)) {
+    if (session.refreshToken) {
+      try {
+        const refreshResponse = await axios.post(
+          `https://${shop}/admin/oauth/access_token`,
+          { client_id: API_KEY, client_secret: API_SECRET, grant_type: "refresh_token", refresh_token: session.refreshToken },
+        );
+        const { access_token: newToken, refresh_token: newRefresh, expires_in } = refreshResponse.data;
+        const newExpiresAt = expires_in
+          ? new Date(Date.now() + expires_in * 1000)
+          : new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await prisma.session.update({
+          where: { shop },
+          data: { accessToken: newToken, refreshToken: newRefresh || session.refreshToken, expiresAt: newExpiresAt },
+        });
+        session.accessToken = newToken;
+      } catch {
+        await prisma.session.delete({ where: { shop } });
+        return res.status(401).json({
+          error: "Token refresh failed — please reinstall the app",
+          authUrl: `${HOST}/auth?shop=${shop}`,
+        });
+      }
+    } else {
+      await prisma.session.delete({ where: { shop } });
+      return res.status(401).json({
+        error: "Access token expired — please reinstall the app",
+        authUrl: `${HOST}/auth?shop=${shop}`,
+      });
+    }
   }
 
   req.shop = shop;
