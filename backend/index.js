@@ -133,18 +133,20 @@ async function requireSession(req, res, next) {
 
   const sessionToken = req.headers["x-shopify-session-token"];
   const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
-  let session = await prisma.session.findUnique({ where: { shop } });
+  const session = await prisma.session.findUnique({ where: { shop } });
 
-  // ── 1. Cached token that came from Token Exchange (has refreshToken = trusted) ─
-  if (session?.accessToken && session.refreshToken && session.expiresAt > fiveMinFromNow) {
-    req.shop = shop;
-    req.token = session.accessToken;
-    return next();
-  }
-
-  // ── 2. Token Exchange (App Bridge session token → expiring offline token) ──
-  // Runs when: no cached token, cached token expired, or legacy token (no refreshToken).
+  // ── Embedded context: App Bridge session token present ────────────────────
   if (sessionToken) {
+    // Only trust online tokens (shpua_ prefix) from Token Exchange.
+    // shpat_ (offline/OAuth) tokens are potentially non-expiring — never cache them.
+    if (session?.accessToken?.startsWith("shpua_") && session.expiresAt > fiveMinFromNow) {
+      req.shop = shop;
+      req.token = session.accessToken;
+      return next();
+    }
+
+    // Token Exchange: App Bridge session token → online access token.
+    // Online tokens (shpua_) are always expiring and never hit the April 2026 restriction.
     try {
       const { data } = await axios.post(
         `https://${shop}/admin/oauth/access_token`,
@@ -154,72 +156,37 @@ async function requireSession(req, res, next) {
           grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
           subject_token: sessionToken,
           subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-          requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+          requested_token_type: "urn:shopify:params:oauth:token-type:online-access-token",
         },
       );
+      console.log("[token-exchange] success, token prefix:", data.access_token?.slice(0, 8));
       const expiresAt = data.expires_in
         ? new Date(Date.now() + data.expires_in * 1000)
         : new Date(Date.now() + 24 * 60 * 60 * 1000);
-      session = await prisma.session.upsert({
+      await prisma.session.upsert({
         where: { shop },
-        update: { accessToken: data.access_token, refreshToken: data.refresh_token || null, expiresAt },
-        create: { shop, accessToken: data.access_token, refreshToken: data.refresh_token || null, expiresAt },
+        update: { accessToken: data.access_token, refreshToken: null, expiresAt },
+        create: { shop, accessToken: data.access_token, refreshToken: null, expiresAt },
       });
       req.shop = shop;
       req.token = data.access_token;
       return next();
     } catch (err) {
-      console.error("[token-exchange] Error:", err.message, JSON.stringify(err.response?.data));
+      console.error("[token-exchange] failed:", err.message, JSON.stringify(err.response?.data));
       return res.status(401).json({
         error: "Token exchange failed",
         details: err.response?.data,
-        authUrl: `${HOST}/auth?shop=${shop}`,
       });
     }
   }
 
-  // ── 3. Cached token without refreshToken (Custom App / dev-login) ────────
-  if (session?.accessToken && (!session.expiresAt || session.expiresAt > fiveMinFromNow)) {
-    req.shop = shop;
-    req.token = session.accessToken;
-    return next();
-  }
-
-  // ── 4. Refresh expiring token ──────────────────────────────────────────────
-  if (session?.refreshToken && session.expiresAt && session.expiresAt <= fiveMinFromNow) {
-    try {
-      const { data } = await axios.post(
-        `https://${shop}/admin/oauth/access_token`,
-        { client_id: API_KEY, client_secret: API_SECRET, grant_type: "refresh_token", refresh_token: session.refreshToken },
-      );
-      const expiresAt = data.expires_in
-        ? new Date(Date.now() + data.expires_in * 1000)
-        : new Date(Date.now() + 24 * 60 * 60 * 1000);
-      await prisma.session.update({
-        where: { shop },
-        data: { accessToken: data.access_token, refreshToken: data.refresh_token || session.refreshToken, expiresAt },
-      });
-      req.shop = shop;
-      req.token = data.access_token;
-      return next();
-    } catch {
-      await prisma.session.delete({ where: { shop } });
-      return res.status(401).json({
-        error: "Token refresh failed — please reinstall the app",
-        authUrl: `${HOST}/auth?shop=${shop}`,
-      });
-    }
-  }
-
-  // ── 5. No usable session ───────────────────────────────────────────────────
+  // ── Non-embedded context: dev-login / local dev (no App Bridge) ───────────
   if (!session) {
     return res.status(401).json({
       error: "Not installed",
       authUrl: `${HOST}/auth?shop=${shop}`,
     });
   }
-
-  // ── 6. Expired with no refresh token ──────────────────────────────────────
   if (session.expiresAt && session.expiresAt <= new Date()) {
     await prisma.session.delete({ where: { shop } });
     return res.status(401).json({
@@ -227,7 +194,6 @@ async function requireSession(req, res, next) {
       authUrl: `${HOST}/auth?shop=${shop}`,
     });
   }
-
   req.shop = shop;
   req.token = session.accessToken;
   next();
