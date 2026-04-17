@@ -294,12 +294,19 @@ export default function App() {
       return;
     }
 
-    // Fetch sections and shop info in parallel
-    Promise.all([
-      axios.get(`${BACKEND_URL}/sections?shop=${SHOP}`),
-      axios.get(`${BACKEND_URL}/store-info?shop=${SHOP}`),
-    ])
-      .then(([sectionsRes, storeRes]) => {
+    const doFetch = async () => {
+      // Pre-warm App Bridge: await idToken() once before making any requests.
+      // This ensures the App Bridge ↔ Shopify handshake completes so the
+      // interceptor can attach a valid session token to every subsequent call.
+      if (window.shopify?.idToken) {
+        try { await window.shopify.idToken(); } catch { /* not embedded */ }
+      }
+
+      try {
+        const [sectionsRes, storeRes] = await Promise.all([
+          axios.get(`${BACKEND_URL}/sections?shop=${SHOP}`),
+          axios.get(`${BACKEND_URL}/store-info?shop=${SHOP}`),
+        ]);
         setSections(sectionsRes.data);
         const alreadyInstalled = sectionsRes.data
           .filter((s) => s.installed)
@@ -308,11 +315,11 @@ export default function App() {
         const shop = storeRes.data.shop;
         setThemeEditorUrl(`https://${shop}/admin/themes/current/editor`);
         setLoading(false);
-      })
-      .catch((err) => {
-        // 401 means the app isn't installed on this store yet —
-        // redirect to the OAuth install flow so Shopify can authorize it.
-        if (err.response?.status === 401 && err.response?.data?.authUrl) {
+      } catch (err) {
+        // Only redirect to OAuth when NOT inside the Shopify admin iframe.
+        // Inside the iframe, Token Exchange handles auth — OAuth redirect breaks the flow.
+        const inEmbedded = !!window.shopify?.idToken;
+        if (!inEmbedded && err.response?.status === 401 && err.response?.data?.authUrl) {
           window.location.href = err.response.data.authUrl;
           return;
         }
@@ -321,7 +328,10 @@ export default function App() {
           text: "Could not load sections. Is the backend running?",
         });
         setLoading(false);
-      });
+      }
+    };
+
+    doFetch();
   }, []);
 
   useEffect(() => {
