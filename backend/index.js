@@ -135,14 +135,15 @@ async function requireSession(req, res, next) {
   const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
   let session = await prisma.session.findUnique({ where: { shop } });
 
-  // ── 1. Valid cached offline token ─────────────────────────────────────────
-  if (session?.accessToken && (!session.expiresAt || session.expiresAt > fiveMinFromNow)) {
+  // ── 1. Cached token that came from Token Exchange (has refreshToken = trusted) ─
+  if (session?.accessToken && session.refreshToken && session.expiresAt > fiveMinFromNow) {
     req.shop = shop;
     req.token = session.accessToken;
     return next();
   }
 
-  // ── 2. Token Exchange (App Bridge session token → expiring offline token) ─
+  // ── 2. Token Exchange (App Bridge session token → expiring offline token) ──
+  // Runs when: no cached token, cached token expired, or legacy token (no refreshToken).
   if (sessionToken) {
     try {
       const { data } = await axios.post(
@@ -177,7 +178,14 @@ async function requireSession(req, res, next) {
     }
   }
 
-  // ── 3. Refresh expiring token ──────────────────────────────────────────────
+  // ── 3. Cached token without refreshToken (Custom App / dev-login) ────────
+  if (session?.accessToken && (!session.expiresAt || session.expiresAt > fiveMinFromNow)) {
+    req.shop = shop;
+    req.token = session.accessToken;
+    return next();
+  }
+
+  // ── 4. Refresh expiring token ──────────────────────────────────────────────
   if (session?.refreshToken && session.expiresAt && session.expiresAt <= fiveMinFromNow) {
     try {
       const { data } = await axios.post(
@@ -203,7 +211,7 @@ async function requireSession(req, res, next) {
     }
   }
 
-  // ── 4. No usable session ───────────────────────────────────────────────────
+  // ── 5. No usable session ───────────────────────────────────────────────────
   if (!session) {
     return res.status(401).json({
       error: "Not installed",
@@ -211,7 +219,7 @@ async function requireSession(req, res, next) {
     });
   }
 
-  // ── 5. Expired with no refresh token ──────────────────────────────────────
+  // ── 6. Expired with no refresh token ──────────────────────────────────────
   if (session.expiresAt && session.expiresAt <= new Date()) {
     await prisma.session.delete({ where: { shop } });
     return res.status(401).json({
