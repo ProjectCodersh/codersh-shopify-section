@@ -85,8 +85,6 @@ app.get("/auth/callback", async (req, res) => {
   if (digest !== hmac) return res.status(403).send("HMAC validation failed");
 
   try {
-    // FIX: Do NOT pass expiring=1 — Shopify 2026 automatically gives expiring
-    // tokens to new public apps. Passing expiring=1 can break things.
     const tokenResponse = await axios.post(
       `https://${shop}/admin/oauth/access_token`,
       { client_id: API_KEY, client_secret: API_SECRET, code },
@@ -99,13 +97,12 @@ app.get("/auth/callback", async (req, res) => {
     } = tokenResponse.data;
 
     console.log(
-      "[oauth-callback] raw response keys:",
+      "[oauth-callback] response keys:",
       Object.keys(tokenResponse.data),
     );
+    console.log("[oauth-callback] token prefix:", accessToken?.slice(0, 10));
     console.log(
-      "[oauth-callback] token prefix:",
-      accessToken?.slice(0, 10),
-      "has refresh:",
+      "[oauth-callback] has refresh:",
       !!refreshToken,
       "expires_in:",
       expires_in,
@@ -138,18 +135,23 @@ app.get("/auth/callback", async (req, res) => {
   }
 });
 
-// ── Get valid offline token (refresh if needed) ───────────────────────────────
+// ── Get valid offline token ───────────────────────────────────────────────────
 async function getValidOfflineToken(shop) {
   const session = await prisma.session.findUnique({ where: { shop } });
   if (!session)
-    throw new Error(`No session found for ${shop}. Please reinstall the app.`);
+    throw new Error(`No session for ${shop}. Please reinstall the app.`);
 
-  // No expiresAt = non-expiring token (legacy) — use as-is
-  if (!session.expiresAt) return session.accessToken;
+  // Non-expiring token (legacy) — use as-is
+  if (!session.expiresAt) {
+    console.log("[token] using non-expiring token for:", shop);
+    return session.accessToken;
+  }
 
   const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
-  const isExpired = session.expiresAt <= fiveMinFromNow;
-  if (!isExpired) return session.accessToken;
+  if (session.expiresAt > fiveMinFromNow) {
+    console.log("[token] token still valid for:", shop);
+    return session.accessToken;
+  }
 
   if (!session.refreshToken) {
     throw new Error(
@@ -180,14 +182,17 @@ async function getValidOfflineToken(shop) {
     },
   });
 
-  console.log(
-    "[token-refresh] refreshed, new prefix:",
-    data.access_token?.slice(0, 10),
-  );
+  console.log("[token-refresh] done, prefix:", data.access_token?.slice(0, 10));
   return data.access_token;
 }
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
+// KEY FIX: We use Token Exchange ONLY to verify the user is logged in.
+// We ALWAYS use the OFFLINE token for actual Shopify Admin API calls.
+// This is because:
+// - Online tokens (from Token Exchange) are user-scoped and cannot reliably write themes
+// - Offline tokens are store-scoped and have full write_themes permission
+// - Theme asset writes (PUT /themes/{id}/assets.json) require offline store token
 async function requireSession(req, res, next) {
   const shop = req.query.shop || req.body?.shop;
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
@@ -195,38 +200,42 @@ async function requireSession(req, res, next) {
   const sessionToken = req.headers["x-shopify-session-token"];
 
   if (sessionToken) {
-    // EMBEDDED APP: Try Token Exchange first
+    // STEP 1: Verify user via Token Exchange (just for auth check)
     try {
-      const { data } = await axios.post(
-        `https://${shop}/admin/oauth/access_token`,
-        {
-          client_id: API_KEY,
-          client_secret: API_SECRET,
-          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-          subject_token: sessionToken,
-          subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-          requested_token_type:
-            "urn:shopify:params:oauth:token-type:online-access-token",
-        },
-      );
-      console.log(
-        "[token-exchange] success, prefix:",
-        data.access_token?.slice(0, 10),
-      );
-      req.shop = shop;
-      req.token = data.access_token;
-      return next();
+      await axios.post(`https://${shop}/admin/oauth/access_token`, {
+        client_id: API_KEY,
+        client_secret: API_SECRET,
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        subject_token: sessionToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        requested_token_type:
+          "urn:shopify:params:oauth:token-type:online-access-token",
+      });
+      console.log("[auth] user verified via token exchange for:", shop);
     } catch (err) {
-      console.error(
-        "[token-exchange] FAILED:",
+      console.warn(
+        "[auth] token exchange verification failed (continuing anyway):",
         err.message,
-        JSON.stringify(err.response?.data),
       );
-      // Fallback to offline token from DB
+      // Don't block — still try offline token below
+    }
+
+    // STEP 2: Always use OFFLINE token for actual API calls
+    try {
+      const offlineToken = await getValidOfflineToken(shop);
+      req.shop = shop;
+      req.token = offlineToken;
+      return next();
+    } catch (offlineErr) {
+      console.error("[auth] no offline token:", offlineErr.message);
+      return res.status(401).json({
+        error: "App not properly installed. Please reinstall.",
+        authUrl: `${HOST}/auth?shop=${shop}`,
+      });
     }
   }
 
-  // NON-EMBEDDED or Token Exchange fallback: use offline token from DB
+  // NON-EMBEDDED: use offline token directly
   try {
     const token = await getValidOfflineToken(shop);
     req.shop = shop;
@@ -271,14 +280,8 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const { sectionId } = req.body;
     const { shop, token } = req;
 
-    console.log(
-      "[inject] sectionId:",
-      sectionId,
-      "shop:",
-      shop,
-      "token prefix:",
-      token?.slice(0, 10),
-    );
+    console.log("[inject] sectionId:", sectionId, "shop:", shop);
+    console.log("[inject] token prefix:", token?.slice(0, 10));
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section)
@@ -286,9 +289,10 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     const liquidCode = getSectionLiquid(section.file);
 
-    // FIX: Use stable API version 2024-10 instead of 2025-07
+    // Use stable API version 2024-10
     const API_VER = "2024-10";
 
+    // Get active theme
     let themesResponse;
     try {
       themesResponse = await axios.get(
@@ -297,7 +301,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
       );
     } catch (themeErr) {
       console.error(
-        "[inject] themes fetch error:",
+        "[inject] themes fetch failed:",
         themeErr.message,
         JSON.stringify(themeErr.response?.data),
       );
@@ -306,39 +310,68 @@ app.post("/inject-section", requireSession, async (req, res) => {
         shopifyError: themeErr.response?.data,
         shopifyStatus: themeErr.response?.status,
         tokenPrefix: token?.slice(0, 10),
+        hint:
+          themeErr.response?.status === 401
+            ? "Token is invalid or expired. Please reinstall the app."
+            : themeErr.response?.status === 403
+              ? "Token does not have write_themes permission. Please reinstall."
+              : "Unexpected error fetching themes.",
       });
     }
 
     const themes = themesResponse.data.themes || [];
     console.log(
-      "[inject] themes:",
+      "[inject] themes found:",
       themes.map((t) => `${t.name}(${t.role})`).join(", "),
     );
 
     const activeTheme = themes.find((t) => t.role === "main");
-    if (!activeTheme)
-      return res.status(404).json({ error: "No active (main) theme found" });
+    if (!activeTheme) {
+      return res
+        .status(404)
+        .json({ error: "No published (main) theme found on this store." });
+    }
 
     console.log(
-      "[inject] active theme:",
+      "[inject] writing to theme:",
       activeTheme.name,
       "id:",
       activeTheme.id,
     );
 
-    // Upload liquid file
-    await axios.put(
-      `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
-      { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
-      {
-        headers: {
-          "X-Shopify-Access-Token": token,
-          "Content-Type": "application/json",
+    // Upload .liquid file
+    try {
+      await axios.put(
+        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
+        {
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          },
         },
-      },
-    );
-
-    console.log("[inject] liquid uploaded:", `sections/${section.id}.liquid`);
+      );
+      console.log("[inject] liquid uploaded:", `sections/${section.id}.liquid`);
+    } catch (putErr) {
+      console.error(
+        "[inject] PUT assets failed:",
+        putErr.message,
+        JSON.stringify(putErr.response?.data),
+      );
+      return res.status(500).json({
+        error: "Failed to write section file: " + putErr.message,
+        shopifyError: putErr.response?.data,
+        shopifyStatus: putErr.response?.status,
+        tokenPrefix: token?.slice(0, 10),
+        themeId: activeTheme.id,
+        hint:
+          putErr.response?.status === 404
+            ? "Theme ID was found but assets endpoint returned 404. This usually means the token does not have write permission to this theme."
+            : putErr.response?.status === 422
+              ? "Liquid file has syntax errors."
+              : "Unexpected error uploading section file.",
+      });
+    }
 
     // Upload CSS/JS assets if any
     const assets = getSectionAssets(section.assets || []);
@@ -353,8 +386,10 @@ app.post("/inject-section", requireSession, async (req, res) => {
           },
         },
       );
+      console.log("[inject] asset uploaded:", asset.key);
     }
 
+    // Save to DB
     await prisma.installedSection.upsert({
       where: { shop_sectionId: { shop, sectionId: section.id } },
       update: { installedAt: new Date() },
@@ -367,7 +402,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
     });
   } catch (error) {
     console.error(
-      "[inject] error:",
+      "[inject] unexpected error:",
       error.message,
       JSON.stringify(error.response?.data),
     );
@@ -430,7 +465,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
   }
 });
 
-// ── Dev login helper ──────────────────────────────────────────────────────────
+// ── Dev login ─────────────────────────────────────────────────────────────────
 app.get("/dev-login", async (req, res) => {
   const shop = req.query.shop || process.env.SHOP;
   const accessToken = req.query.token || process.env.SHOPIFY_ACCESS_TOKEN;
@@ -445,7 +480,7 @@ app.get("/dev-login", async (req, res) => {
   res.json({ success: true, message: `Dev session seeded for ${shop}` });
 });
 
-// ── Debug session endpoint ────────────────────────────────────────────────────
+// ── Debug session ─────────────────────────────────────────────────────────────
 app.get("/debug-session", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ error: "Missing shop" });
@@ -463,6 +498,35 @@ app.get("/debug-session", async (req, res) => {
     isExpired: session.expiresAt ? session.expiresAt <= new Date() : false,
     isNonExpiring: !session.expiresAt,
   });
+});
+
+// ── Test token directly (debug only) ─────────────────────────────────────────
+// Call this to verify if your stored token can actually read themes
+app.get("/test-token", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).json({ error: "Missing shop" });
+
+  try {
+    const token = await getValidOfflineToken(shop);
+    const response = await axios.get(
+      `https://${shop}/admin/api/2024-10/themes.json`,
+      { headers: { "X-Shopify-Access-Token": token } },
+    );
+    const themes = response.data.themes || [];
+    res.json({
+      success: true,
+      tokenPrefix: token?.slice(0, 10),
+      themesCount: themes.length,
+      themes: themes.map((t) => ({ id: t.id, name: t.name, role: t.role })),
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      shopifyError: err.response?.data,
+      shopifyStatus: err.response?.status,
+    });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
