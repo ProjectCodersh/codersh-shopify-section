@@ -19,19 +19,8 @@ const SCOPES = process.env.SCOPES || "write_themes,read_themes";
 const HOST = process.env.HOST || "http://localhost:3000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// API VERSION STRATEGY:
-// - Use 2025-01 for GraphQL (themeFilesUpsert / themeFilesDelete)
-// - Use 2025-01 for REST themes list (GET /themes.json)
-//
-// WHY GRAPHQL for file writes?
-// The REST PUT /themes/{id}/assets.json endpoint returns 404 on Shopify 2025+
-// for Online Store 2.0 themes (like Horizon). Shopify has moved theme file
-// management to the GraphQL Admin API exclusively for newer themes.
-// Ref: https://shopify.dev/docs/api/admin-graphql/latest/mutations/themeFilesUpsert
-// ─────────────────────────────────────────────────────────────────────────────
-const GQL_VER = "2025-01";
-const REST_VER = "2025-01";
+// REST API version for all Shopify calls
+const REST_VER = "2024-10";
 
 app.use(cors());
 app.use(express.json());
@@ -73,8 +62,6 @@ app.get("/auth", async (req, res) => {
 });
 
 // ── OAuth Step 2 ──────────────────────────────────────────────────────────────
-// REQUIRED: expiring=1 tells Shopify to issue an expiring offline token with
-// refresh_token. Mandatory for public apps created after April 1, 2026.
 app.get("/auth/callback", async (req, res) => {
   const { shop, code, hmac, state } = req.query;
 
@@ -107,7 +94,7 @@ app.get("/auth/callback", async (req, res) => {
         client_id: API_KEY,
         client_secret: API_SECRET,
         code,
-        expiring: 1, // Required for public apps post April 1 2026
+        expiring: 1,
       },
     );
 
@@ -210,36 +197,9 @@ async function getValidOfflineToken(shop) {
     );
     return data.access_token;
   } catch (refreshErr) {
-    console.error(
-      "[token-refresh] failed:",
-      refreshErr.message,
-      JSON.stringify(refreshErr.response?.data),
-    );
+    console.error("[token-refresh] failed:", refreshErr.message);
     throw new Error("Token refresh failed. Please reinstall the app.");
   }
-}
-
-// ── GraphQL helper ────────────────────────────────────────────────────────────
-// All theme file writes/deletes use GraphQL — the REST assets API returns 404
-// on Online Store 2.0 themes (Horizon etc.) in Shopify 2025+.
-async function shopifyGraphQL(shop, token, query, variables = {}) {
-  const response = await axios.post(
-    `https://${shop}/admin/api/${GQL_VER}/graphql.json`,
-    { query, variables },
-    {
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
-    },
-  );
-
-  if (response.data.errors) {
-    const errMsg = response.data.errors.map((e) => e.message).join("; ");
-    throw new Error(`GraphQL error: ${errMsg}`);
-  }
-
-  return response.data.data;
 }
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
@@ -320,9 +280,97 @@ app.get("/sections", requireSession, async (req, res) => {
   }
 });
 
+// ── Debug theme ───────────────────────────────────────────────────────────────
+// USE THIS to diagnose 404 on asset writes.
+// Checks theme_store_id — if set, theme is LOCKED (Theme Store theme).
+// Locked themes cannot be modified with write_themes alone.
+// FIX: Duplicate the theme in Shopify Admin → publish the copy.
+app.get("/debug-theme", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).json({ error: "Missing shop" });
+
+  try {
+    const token = await getValidOfflineToken(shop);
+
+    // Get all themes
+    const themesRes = await axios.get(
+      `https://${shop}/admin/api/${REST_VER}/themes.json`,
+      { headers: { "X-Shopify-Access-Token": token } },
+    );
+    const themes = themesRes.data.themes || [];
+    const activeTheme = themes.find((t) => t.role === "main");
+
+    if (!activeTheme) {
+      return res.json({ error: "No main theme found", themes });
+    }
+
+    // Get detailed info for active theme including theme_store_id
+    const themeDetailRes = await axios.get(
+      `https://${shop}/admin/api/${REST_VER}/themes/${activeTheme.id}.json`,
+      { headers: { "X-Shopify-Access-Token": token } },
+    );
+    const themeDetail = themeDetailRes.data.theme;
+
+    // Try a test write to confirm if writable
+    let writeTest = null;
+    try {
+      await axios.put(
+        `https://${shop}/admin/api/${REST_VER}/themes/${activeTheme.id}/assets.json`,
+        {
+          asset: {
+            key: "sections/cws-write-test.liquid",
+            value: "<!-- test -->",
+          },
+        },
+        {
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      writeTest = { success: true, message: "Theme is writable!" };
+
+      // Clean up test file
+      await axios
+        .delete(
+          `https://${shop}/admin/api/${REST_VER}/themes/${activeTheme.id}/assets.json?asset[key]=sections/cws-write-test.liquid`,
+          { headers: { "X-Shopify-Access-Token": token } },
+        )
+        .catch(() => {});
+    } catch (writeErr) {
+      writeTest = {
+        success: false,
+        status: writeErr.response?.status,
+        error: writeErr.response?.data || writeErr.message,
+      };
+    }
+
+    res.json({
+      activeTheme: {
+        id: themeDetail.id,
+        name: themeDetail.name,
+        role: themeDetail.role,
+        theme_store_id: themeDetail.theme_store_id,
+        isLocked: !!themeDetail.theme_store_id,
+        processing: themeDetail.processing,
+      },
+      writeTest,
+      diagnosis: themeDetail.theme_store_id
+        ? "⚠️ LOCKED: This is a Shopify Theme Store theme (theme_store_id is set). " +
+          "Duplicating the theme removes the lock. Go to: Online Store → Themes → " +
+          "click ••• on Horizon → Duplicate → then Publish the copy."
+        : "✅ Theme is NOT locked. Write should work. Check token scopes.",
+      tokenPrefix: token?.slice(0, 10),
+    });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: err.message, shopifyError: err.response?.data });
+  }
+});
+
 // ── Inject section ────────────────────────────────────────────────────────────
-// Uses GraphQL themeFilesUpsert — NOT the REST assets API.
-// The REST PUT /themes/{id}/assets.json returns 404 on OS2 themes in 2025+.
 app.post("/inject-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
@@ -337,7 +385,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     const liquidCode = getSectionLiquid(section.file);
 
-    // ── Step 1: Get active theme via REST (this still works fine) ─────────────
+    // Get active theme
     let activeTheme;
     try {
       const themesResponse = await axios.get(
@@ -355,7 +403,6 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(500).json({
         error: "Failed to fetch themes: " + themeErr.message,
         shopifyError: themeErr.response?.data,
-        shopifyStatus: themeErr.response?.status,
       });
     }
 
@@ -372,85 +419,79 @@ app.post("/inject-section", requireSession, async (req, res) => {
       activeTheme.id,
     );
 
-    // ── Step 2: Build GID for GraphQL ─────────────────────────────────────────
-    // GraphQL requires the theme ID in GID format
-    const themeGid = `gid://shopify/OnlineStoreTheme/${activeTheme.id}`;
-
-    // ── Step 3: Upload .liquid file via GraphQL themeFilesUpsert ─────────────
-    const upsertMutation = `
-      mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
-        themeFilesUpsert(themeId: $themeId, files: $files) {
-          upsertedThemeFiles {
-            filename
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    // Upload the main liquid file
-    try {
-      const filesToUpload = [
-        {
-          filename: `sections/${section.id}.liquid`,
-          body: {
-            type: "TEXT",
-            value: liquidCode,
-          },
-        },
-      ];
-
-      // Also include any CSS/JS assets in the same mutation call
-      const sectionAssets = getSectionAssets(section.assets || []);
-      for (const asset of sectionAssets) {
-        filesToUpload.push({
-          filename: asset.key,
-          body: {
-            type: "TEXT",
-            value: asset.value,
-          },
-        });
-      }
-
-      console.log(
-        "[inject] uploading files via GraphQL:",
-        filesToUpload.map((f) => f.filename),
+    // Check if theme is locked (Theme Store theme)
+    // theme_store_id being set means Shopify locks direct asset writes
+    if (activeTheme.theme_store_id) {
+      console.warn(
+        "[inject] theme is locked (theme_store_id:",
+        activeTheme.theme_store_id,
+        ")",
       );
-
-      const gqlResult = await shopifyGraphQL(shop, token, upsertMutation, {
-        themeId: themeGid,
-        files: filesToUpload,
-      });
-
-      const userErrors = gqlResult?.themeFilesUpsert?.userErrors || [];
-      if (userErrors.length > 0) {
-        const errorMsg = userErrors
-          .map((e) => `${e.field}: ${e.message}`)
-          .join("; ");
-        console.error("[inject] GraphQL userErrors:", errorMsg);
-        return res.status(422).json({
-          error: "Shopify rejected the file: " + errorMsg,
-          userErrors,
-        });
-      }
-
-      const upserted = gqlResult?.themeFilesUpsert?.upsertedThemeFiles || [];
-      console.log(
-        "[inject] successfully uploaded:",
-        upserted.map((f) => f.filename),
-      );
-    } catch (gqlErr) {
-      console.error("[inject] GraphQL upsert failed:", gqlErr.message);
-      return res.status(500).json({
-        error: "Failed to upload section file: " + gqlErr.message,
-        hint: "GraphQL themeFilesUpsert failed. Check token scopes and theme access.",
+      return res.status(403).json({
+        error:
+          "Your active theme is a locked Shopify Theme Store theme and cannot be modified directly.",
+        fix: "Go to Online Store → Themes → click ••• on your theme → Duplicate → then Publish the copy. The duplicated theme is fully writable.",
+        theme_store_id: activeTheme.theme_store_id,
       });
     }
 
-    // ── Step 4: Save to DB ────────────────────────────────────────────────────
+    // Upload .liquid file via REST assets API
+    try {
+      await axios.put(
+        `https://${shop}/admin/api/${REST_VER}/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
+        {
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      console.log("[inject] liquid uploaded:", `sections/${section.id}.liquid`);
+    } catch (putErr) {
+      console.error(
+        "[inject] PUT assets failed:",
+        putErr.message,
+        JSON.stringify(putErr.response?.data),
+      );
+
+      // If still 404, tell user to run /debug-theme for diagnosis
+      if (putErr.response?.status === 404) {
+        return res.status(500).json({
+          error: "Failed to write section file (404). The theme may be locked.",
+          shopifyError: putErr.response?.data,
+          shopifyStatus: 404,
+          tokenPrefix: token?.slice(0, 10),
+          themeId: activeTheme.id,
+          fix: `Run /debug-theme?shop=${shop} to diagnose. If theme is locked, duplicate it in Shopify Admin.`,
+        });
+      }
+
+      return res.status(500).json({
+        error: "Failed to write section file: " + putErr.message,
+        shopifyError: putErr.response?.data,
+        shopifyStatus: putErr.response?.status,
+        tokenPrefix: token?.slice(0, 10),
+      });
+    }
+
+    // Upload CSS/JS assets if any
+    const assets = getSectionAssets(section.assets || []);
+    for (const asset of assets) {
+      await axios.put(
+        `https://${shop}/admin/api/${REST_VER}/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: asset.key, value: asset.value } },
+        {
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      console.log("[inject] asset uploaded:", asset.key);
+    }
+
+    // Save to DB
     await prisma.installedSection.upsert({
       where: { shop_sectionId: { shop, sectionId: section.id } },
       update: { installedAt: new Date() },
@@ -463,15 +504,13 @@ app.post("/inject-section", requireSession, async (req, res) => {
     });
   } catch (error) {
     console.error("[inject] unexpected error:", error.message);
-    res.status(500).json({
-      error: error.message,
-      shopifyError: error.response?.data,
-    });
+    res
+      .status(500)
+      .json({ error: error.message, shopifyError: error.response?.data });
   }
 });
 
 // ── Remove section ────────────────────────────────────────────────────────────
-// Uses GraphQL themeFilesDelete — same reason as above.
 app.delete("/remove-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
@@ -480,7 +519,6 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
 
-    // Get active theme
     const themesResponse = await axios.get(
       `https://${shop}/admin/api/${REST_VER}/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
@@ -490,45 +528,22 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     );
 
     if (activeTheme) {
-      const themeGid = `gid://shopify/OnlineStoreTheme/${activeTheme.id}`;
-
-      const deleteMutation = `
-        mutation themeFilesDelete($themeId: ID!, $files: [String!]!) {
-          themeFilesDelete(themeId: $themeId, files: $files) {
-            deletedThemeFiles {
-              filename
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-      `;
-
-      // Build list of files to delete
-      const filesToDelete = [`sections/${section.id}.liquid`];
-      for (const asset of section.assets || []) {
-        filesToDelete.push(asset.key);
-      }
-
-      try {
-        const gqlResult = await shopifyGraphQL(shop, token, deleteMutation, {
-          themeId: themeGid,
-          files: filesToDelete,
+      await axios
+        .delete(
+          `https://${shop}/admin/api/${REST_VER}/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
+          { headers: { "X-Shopify-Access-Token": token } },
+        )
+        .catch((err) => {
+          if (err.response?.status !== 404) throw err;
         });
-        console.log(
-          "[remove] deleted files:",
-          gqlResult?.themeFilesDelete?.deletedThemeFiles?.map(
-            (f) => f.filename,
-          ),
-        );
-      } catch (gqlErr) {
-        // Log but don't fail — file might already be gone
-        console.warn(
-          "[remove] GraphQL delete failed (continuing):",
-          gqlErr.message,
-        );
+
+      for (const asset of section.assets || []) {
+        await axios
+          .delete(
+            `https://${shop}/admin/api/${REST_VER}/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
+            { headers: { "X-Shopify-Access-Token": token } },
+          )
+          .catch(() => {});
       }
     }
 
@@ -587,36 +602,31 @@ app.get("/test-token", async (req, res) => {
 
   try {
     const token = await getValidOfflineToken(shop);
-
-    // Test REST themes list
-    const restResponse = await axios.get(
+    const response = await axios.get(
       `https://${shop}/admin/api/${REST_VER}/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
-    const themes = restResponse.data.themes || [];
-
-    // Also test GraphQL access
-    let gqlTest = null;
-    try {
-      const gqlData = await shopifyGraphQL(shop, token, `{ shop { name } }`);
-      gqlTest = { success: true, shopName: gqlData?.shop?.name };
-    } catch (gqlErr) {
-      gqlTest = { success: false, error: gqlErr.message };
-    }
-
+    const themes = response.data.themes || [];
     res.json({
       success: true,
       tokenPrefix: token?.slice(0, 10),
       themesCount: themes.length,
-      themes: themes.map((t) => ({ id: t.id, name: t.name, role: t.role })),
-      graphqlAccess: gqlTest,
+      themes: themes.map((t) => ({
+        id: t.id,
+        name: t.name,
+        role: t.role,
+        theme_store_id: t.theme_store_id,
+        isLocked: !!t.theme_store_id,
+      })),
+      hint: themes.some((t) => t.theme_store_id && t.role === "main")
+        ? "⚠️ Your active theme is locked. Duplicate it in Shopify Admin to make it writable."
+        : "✅ Active theme is writable.",
     });
   } catch (err) {
     res.status(500).json({
       success: false,
       error: err.message,
       shopifyError: err.response?.data,
-      shopifyStatus: err.response?.status,
     });
   }
 });
@@ -625,5 +635,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`),
 );
-
-// is that a new updated file replacing the ole rest to Gql ?
