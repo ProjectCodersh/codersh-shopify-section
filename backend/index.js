@@ -87,7 +87,7 @@ app.get("/auth/callback", async (req, res) => {
   try {
     const tokenResponse = await axios.post(
       `https://${shop}/admin/oauth/access_token`,
-      { client_id: API_KEY, client_secret: API_SECRET, code },
+      { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
     );
 
     const {
@@ -289,8 +289,8 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     const liquidCode = getSectionLiquid(section.file);
 
-    // Use stable API version 2024-10
-    const API_VER = "2024-10";
+    // Use stable API version 2023-10
+    const API_VER = "2023-10";
 
     // Get active theme
     let themesResponse;
@@ -419,7 +419,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
     const { shop, token } = req;
-    const API_VER = "2024-10";
+    const API_VER = "2023-10";
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
@@ -509,15 +509,25 @@ app.get("/test-token", async (req, res) => {
   try {
     const token = await getValidOfflineToken(shop);
     const response = await axios.get(
-      `https://${shop}/admin/api/2024-10/themes.json`,
+      `https://${shop}/admin/api/2023-10/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const themes = response.data.themes || [];
+    const activeTheme = themes.find((t) => t.role === "main");
     res.json({
       success: true,
       tokenPrefix: token?.slice(0, 10),
       themesCount: themes.length,
-      themes: themes.map((t) => ({ id: t.id, name: t.name, role: t.role })),
+      themes: themes.map((t) => ({
+        id: t.id,
+        name: t.name,
+        role: t.role,
+        theme_store_id: t.theme_store_id || null,
+        isLocked: !!t.theme_store_id,
+      })),
+      hint: activeTheme?.theme_store_id
+        ? "⚠️ Active theme is LOCKED (theme_store_id set). Duplicate it in Shopify Admin first!"
+        : "✅ Active theme appears writable.",
     });
   } catch (err) {
     res.status(500).json({
@@ -525,6 +535,87 @@ app.get("/test-token", async (req, res) => {
       error: err.message,
       shopifyError: err.response?.data,
       shopifyStatus: err.response?.status,
+    });
+  }
+});
+
+// -- Debug theme (checks lock + does a real test write) --
+app.get("/debug-theme", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).json({ error: "Missing shop" });
+
+  try {
+    const token = await getValidOfflineToken(shop);
+    const API_VER = "2023-10";
+
+    const themesRes = await axios.get(
+      `https://${shop}/admin/api/${API_VER}/themes.json`,
+      { headers: { "X-Shopify-Access-Token": token } },
+    );
+    const themes = themesRes.data.themes || [];
+    const activeTheme = themes.find((t) => t.role === "main");
+
+    if (!activeTheme) {
+      return res.status(404).json({ error: "No main theme found" });
+    }
+
+    const isLocked = !!activeTheme.theme_store_id;
+
+    // Do a real test write
+    let writeTest = { success: false, status: null, error: null };
+    try {
+      const testKey = "snippets/cws-write-test.liquid";
+      await axios.put(
+        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
+        {
+          asset: {
+            key: testKey,
+            value: "{%- comment -%}cws write test{%- endcomment -%}",
+          },
+        },
+        {
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      await axios
+        .delete(
+          `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=${testKey}`,
+          { headers: { "X-Shopify-Access-Token": token } },
+        )
+        .catch(() => {});
+      writeTest = { success: true, message: "Theme is writable!" };
+    } catch (writeErr) {
+      writeTest = {
+        success: false,
+        status: writeErr.response?.status,
+        error: writeErr.response?.data || writeErr.message,
+      };
+    }
+
+    res.json({
+      activeTheme: {
+        id: activeTheme.id,
+        name: activeTheme.name,
+        role: activeTheme.role,
+        theme_store_id: activeTheme.theme_store_id || null,
+        isLocked,
+      },
+      tokenPrefix: token?.slice(0, 10),
+      writeTest,
+      diagnosis: isLocked
+        ? "LOCKED: This is a Shopify Theme Store theme. Duplicate it to make it writable."
+        : writeTest.success
+          ? "Theme is NOT locked. Write should work."
+          : `Theme is unlocked but write still failed (status ${writeTest.status}). Try reinstalling the app to get a fresh token.`,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      shopifyError: err.response?.data,
     });
   }
 });
