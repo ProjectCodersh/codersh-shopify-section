@@ -20,11 +20,18 @@ const HOST = process.env.HOST || "http://localhost:3000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IMPORTANT: Shopify API version for theme assets
-// Use 2024-10 — it is stable for REST theme assets.
-// Do NOT use 2025-07 or 2026-07 for theme asset PUT/DELETE.
+// API VERSION STRATEGY:
+// - Use 2025-01 for GraphQL (themeFilesUpsert / themeFilesDelete)
+// - Use 2025-01 for REST themes list (GET /themes.json)
+//
+// WHY GRAPHQL for file writes?
+// The REST PUT /themes/{id}/assets.json endpoint returns 404 on Shopify 2025+
+// for Online Store 2.0 themes (like Horizon). Shopify has moved theme file
+// management to the GraphQL Admin API exclusively for newer themes.
+// Ref: https://shopify.dev/docs/api/admin-graphql/latest/mutations/themeFilesUpsert
 // ─────────────────────────────────────────────────────────────────────────────
-const API_VER = "2024-10";
+const GQL_VER = "2025-01";
+const REST_VER = "2025-01";
 
 app.use(cors());
 app.use(express.json());
@@ -66,10 +73,8 @@ app.get("/auth", async (req, res) => {
 });
 
 // ── OAuth Step 2 ──────────────────────────────────────────────────────────────
-// FIX: Added `expiring: 1` to the token exchange POST body.
-// As of April 1, 2026, ALL new public Shopify apps must request expiring tokens.
-// Without this, Shopify returns a non-expiring token which is rejected with 403.
-// Source: https://shopify.dev/changelog/expiring-offline-access-tokens-required
+// REQUIRED: expiring=1 tells Shopify to issue an expiring offline token with
+// refresh_token. Mandatory for public apps created after April 1, 2026.
 app.get("/auth/callback", async (req, res) => {
   const { shop, code, hmac, state } = req.query;
 
@@ -96,16 +101,13 @@ app.get("/auth/callback", async (req, res) => {
   if (digest !== hmac) return res.status(403).send("HMAC validation failed");
 
   try {
-    // ✅ KEY FIX: expiring=1 tells Shopify to issue an expiring offline token
-    // with a refresh_token. Without this, Shopify gives a permanent token
-    // which is now rejected with 403 for public apps created after April 1 2026.
     const tokenResponse = await axios.post(
       `https://${shop}/admin/oauth/access_token`,
       {
         client_id: API_KEY,
         client_secret: API_SECRET,
         code,
-        expiring: 1, // ← THIS IS THE CRITICAL FIX
+        expiring: 1, // Required for public apps post April 1 2026
       },
     );
 
@@ -160,7 +162,6 @@ async function getValidOfflineToken(shop) {
   if (!session)
     throw new Error(`No session for ${shop}. Please reinstall the app.`);
 
-  // Non-expiring token (dev stores sometimes still return this) — use as-is
   if (!session.expiresAt) {
     console.log("[token] using non-expiring token for:", shop);
     return session.accessToken;
@@ -174,11 +175,10 @@ async function getValidOfflineToken(shop) {
 
   if (!session.refreshToken) {
     throw new Error(
-      "Token expired and no refresh token available. Please reinstall the app.",
+      "Token expired and no refresh token. Please reinstall the app.",
     );
   }
 
-  // ── Refresh the token ─────────────────────────────────────────────────────
   console.log("[token-refresh] refreshing for:", shop);
   try {
     const { data } = await axios.post(
@@ -219,10 +219,30 @@ async function getValidOfflineToken(shop) {
   }
 }
 
+// ── GraphQL helper ────────────────────────────────────────────────────────────
+// All theme file writes/deletes use GraphQL — the REST assets API returns 404
+// on Online Store 2.0 themes (Horizon etc.) in Shopify 2025+.
+async function shopifyGraphQL(shop, token, query, variables = {}) {
+  const response = await axios.post(
+    `https://${shop}/admin/api/${GQL_VER}/graphql.json`,
+    { query, variables },
+    {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+    },
+  );
+
+  if (response.data.errors) {
+    const errMsg = response.data.errors.map((e) => e.message).join("; ");
+    throw new Error(`GraphQL error: ${errMsg}`);
+  }
+
+  return response.data.data;
+}
+
 // ── Auth middleware ───────────────────────────────────────────────────────────
-// Token Exchange is used ONLY to verify the Shopify user session (embedded auth).
-// The OFFLINE token from DB is ALWAYS used for actual Shopify Admin API calls.
-// Reason: online tokens from Token Exchange are user-scoped and cannot write themes.
 async function requireSession(req, res, next) {
   const shop = req.query.shop || req.body?.shop;
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
@@ -230,7 +250,6 @@ async function requireSession(req, res, next) {
   const sessionToken = req.headers["x-shopify-session-token"];
 
   if (sessionToken) {
-    // Verify the user is authenticated via Token Exchange
     try {
       await axios.post(`https://${shop}/admin/oauth/access_token`, {
         client_id: API_KEY,
@@ -243,14 +262,12 @@ async function requireSession(req, res, next) {
       });
       console.log("[auth] user verified via token exchange for:", shop);
     } catch (err) {
-      // Don't block on verification failure — fall through to offline token check
       console.warn(
         "[auth] token exchange verification failed (continuing):",
         err.message,
       );
     }
 
-    // Always use the OFFLINE token for API calls
     try {
       const offlineToken = await getValidOfflineToken(shop);
       req.shop = shop;
@@ -265,7 +282,6 @@ async function requireSession(req, res, next) {
     }
   }
 
-  // Non-embedded or local dev — use offline token directly
   try {
     const token = await getValidOfflineToken(shop);
     req.shop = shop;
@@ -305,6 +321,8 @@ app.get("/sections", requireSession, async (req, res) => {
 });
 
 // ── Inject section ────────────────────────────────────────────────────────────
+// Uses GraphQL themeFilesUpsert — NOT the REST assets API.
+// The REST PUT /themes/{id}/assets.json returns 404 on OS2 themes in 2025+.
 app.post("/inject-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
@@ -319,106 +337,120 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     const liquidCode = getSectionLiquid(section.file);
 
-    // Get all themes
-    let themesResponse;
+    // ── Step 1: Get active theme via REST (this still works fine) ─────────────
+    let activeTheme;
     try {
-      themesResponse = await axios.get(
-        `https://${shop}/admin/api/${API_VER}/themes.json`,
+      const themesResponse = await axios.get(
+        `https://${shop}/admin/api/${REST_VER}/themes.json`,
         { headers: { "X-Shopify-Access-Token": token } },
       );
-    } catch (themeErr) {
-      console.error(
-        "[inject] themes fetch failed:",
-        themeErr.message,
-        JSON.stringify(themeErr.response?.data),
+      const themes = themesResponse.data.themes || [];
+      console.log(
+        "[inject] themes:",
+        themes.map((t) => `${t.name}(${t.role})`).join(", "),
       );
+      activeTheme = themes.find((t) => t.role === "main");
+    } catch (themeErr) {
+      console.error("[inject] themes fetch failed:", themeErr.message);
       return res.status(500).json({
         error: "Failed to fetch themes: " + themeErr.message,
         shopifyError: themeErr.response?.data,
         shopifyStatus: themeErr.response?.status,
-        tokenPrefix: token?.slice(0, 10),
-        hint:
-          themeErr.response?.status === 401
-            ? "Token is invalid or expired. Please reinstall the app."
-            : themeErr.response?.status === 403
-              ? "Token does not have write_themes permission. Please reinstall."
-              : "Unexpected error fetching themes.",
       });
     }
 
-    const themes = themesResponse.data.themes || [];
-    console.log(
-      "[inject] themes found:",
-      themes.map((t) => `${t.name}(${t.role})`).join(", "),
-    );
-
-    const activeTheme = themes.find((t) => t.role === "main");
     if (!activeTheme) {
       return res
         .status(404)
-        .json({ error: "No published (main) theme found on this store." });
+        .json({ error: "No published (main) theme found." });
     }
 
     console.log(
-      "[inject] writing to theme:",
+      "[inject] active theme:",
       activeTheme.name,
       "id:",
       activeTheme.id,
     );
 
-    // Upload .liquid file
+    // ── Step 2: Build GID for GraphQL ─────────────────────────────────────────
+    // GraphQL requires the theme ID in GID format
+    const themeGid = `gid://shopify/OnlineStoreTheme/${activeTheme.id}`;
+
+    // ── Step 3: Upload .liquid file via GraphQL themeFilesUpsert ─────────────
+    const upsertMutation = `
+      mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+        themeFilesUpsert(themeId: $themeId, files: $files) {
+          upsertedThemeFiles {
+            filename
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    // Upload the main liquid file
     try {
-      await axios.put(
-        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
-        { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
+      const filesToUpload = [
         {
-          headers: {
-            "X-Shopify-Access-Token": token,
-            "Content-Type": "application/json",
+          filename: `sections/${section.id}.liquid`,
+          body: {
+            type: "TEXT",
+            value: liquidCode,
           },
         },
+      ];
+
+      // Also include any CSS/JS assets in the same mutation call
+      const sectionAssets = getSectionAssets(section.assets || []);
+      for (const asset of sectionAssets) {
+        filesToUpload.push({
+          filename: asset.key,
+          body: {
+            type: "TEXT",
+            value: asset.value,
+          },
+        });
+      }
+
+      console.log(
+        "[inject] uploading files via GraphQL:",
+        filesToUpload.map((f) => f.filename),
       );
-      console.log("[inject] liquid uploaded:", `sections/${section.id}.liquid`);
-    } catch (putErr) {
-      console.error(
-        "[inject] PUT assets failed:",
-        putErr.message,
-        JSON.stringify(putErr.response?.data),
+
+      const gqlResult = await shopifyGraphQL(shop, token, upsertMutation, {
+        themeId: themeGid,
+        files: filesToUpload,
+      });
+
+      const userErrors = gqlResult?.themeFilesUpsert?.userErrors || [];
+      if (userErrors.length > 0) {
+        const errorMsg = userErrors
+          .map((e) => `${e.field}: ${e.message}`)
+          .join("; ");
+        console.error("[inject] GraphQL userErrors:", errorMsg);
+        return res.status(422).json({
+          error: "Shopify rejected the file: " + errorMsg,
+          userErrors,
+        });
+      }
+
+      const upserted = gqlResult?.themeFilesUpsert?.upsertedThemeFiles || [];
+      console.log(
+        "[inject] successfully uploaded:",
+        upserted.map((f) => f.filename),
       );
+    } catch (gqlErr) {
+      console.error("[inject] GraphQL upsert failed:", gqlErr.message);
       return res.status(500).json({
-        error: "Failed to write section file: " + putErr.message,
-        shopifyError: putErr.response?.data,
-        shopifyStatus: putErr.response?.status,
-        tokenPrefix: token?.slice(0, 10),
-        themeId: activeTheme.id,
-        hint:
-          putErr.response?.status === 404
-            ? "Theme assets endpoint 404 — token may lack write_themes scope. Fresh reinstall required."
-            : putErr.response?.status === 422
-              ? "Liquid file has syntax errors."
-              : putErr.response?.status === 403
-                ? "Token lacks write_themes permission. Please reinstall."
-                : "Unexpected error uploading section file.",
+        error: "Failed to upload section file: " + gqlErr.message,
+        hint: "GraphQL themeFilesUpsert failed. Check token scopes and theme access.",
       });
     }
 
-    // Upload CSS/JS assets if any
-    const assets = getSectionAssets(section.assets || []);
-    for (const asset of assets) {
-      await axios.put(
-        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
-        { asset: { key: asset.key, value: asset.value } },
-        {
-          headers: {
-            "X-Shopify-Access-Token": token,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-      console.log("[inject] asset uploaded:", asset.key);
-    }
-
-    // Save to DB
+    // ── Step 4: Save to DB ────────────────────────────────────────────────────
     await prisma.installedSection.upsert({
       where: { shop_sectionId: { shop, sectionId: section.id } },
       update: { installedAt: new Date() },
@@ -430,20 +462,16 @@ app.post("/inject-section", requireSession, async (req, res) => {
       message: `"${section.name}" added to your theme!`,
     });
   } catch (error) {
-    console.error(
-      "[inject] unexpected error:",
-      error.message,
-      JSON.stringify(error.response?.data),
-    );
+    console.error("[inject] unexpected error:", error.message);
     res.status(500).json({
       error: error.message,
       shopifyError: error.response?.data,
-      shopifyStatus: error.response?.status,
     });
   }
 });
 
 // ── Remove section ────────────────────────────────────────────────────────────
+// Uses GraphQL themeFilesDelete — same reason as above.
 app.delete("/remove-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
@@ -452,8 +480,9 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
 
+    // Get active theme
     const themesResponse = await axios.get(
-      `https://${shop}/admin/api/${API_VER}/themes.json`,
+      `https://${shop}/admin/api/${REST_VER}/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const activeTheme = themesResponse.data.themes.find(
@@ -461,22 +490,45 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     );
 
     if (activeTheme) {
-      await axios
-        .delete(
-          `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
-          { headers: { "X-Shopify-Access-Token": token } },
-        )
-        .catch((err) => {
-          if (err.response?.status !== 404) throw err;
-        });
+      const themeGid = `gid://shopify/OnlineStoreTheme/${activeTheme.id}`;
 
+      const deleteMutation = `
+        mutation themeFilesDelete($themeId: ID!, $files: [String!]!) {
+          themeFilesDelete(themeId: $themeId, files: $files) {
+            deletedThemeFiles {
+              filename
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
+
+      // Build list of files to delete
+      const filesToDelete = [`sections/${section.id}.liquid`];
       for (const asset of section.assets || []) {
-        await axios
-          .delete(
-            `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
-            { headers: { "X-Shopify-Access-Token": token } },
-          )
-          .catch(() => {});
+        filesToDelete.push(asset.key);
+      }
+
+      try {
+        const gqlResult = await shopifyGraphQL(shop, token, deleteMutation, {
+          themeId: themeGid,
+          files: filesToDelete,
+        });
+        console.log(
+          "[remove] deleted files:",
+          gqlResult?.themeFilesDelete?.deletedThemeFiles?.map(
+            (f) => f.filename,
+          ),
+        );
+      } catch (gqlErr) {
+        // Log but don't fail — file might already be gone
+        console.warn(
+          "[remove] GraphQL delete failed (continuing):",
+          gqlErr.message,
+        );
       }
     }
 
@@ -535,16 +587,29 @@ app.get("/test-token", async (req, res) => {
 
   try {
     const token = await getValidOfflineToken(shop);
-    const response = await axios.get(
-      `https://${shop}/admin/api/${API_VER}/themes.json`,
+
+    // Test REST themes list
+    const restResponse = await axios.get(
+      `https://${shop}/admin/api/${REST_VER}/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
-    const themes = response.data.themes || [];
+    const themes = restResponse.data.themes || [];
+
+    // Also test GraphQL access
+    let gqlTest = null;
+    try {
+      const gqlData = await shopifyGraphQL(shop, token, `{ shop { name } }`);
+      gqlTest = { success: true, shopName: gqlData?.shop?.name };
+    } catch (gqlErr) {
+      gqlTest = { success: false, error: gqlErr.message };
+    }
+
     res.json({
       success: true,
       tokenPrefix: token?.slice(0, 10),
       themesCount: themes.length,
       themes: themes.map((t) => ({ id: t.id, name: t.name, role: t.role })),
+      graphqlAccess: gqlTest,
     });
   } catch (err) {
     res.status(500).json({
