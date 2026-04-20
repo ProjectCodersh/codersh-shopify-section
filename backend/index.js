@@ -114,13 +114,22 @@ app.get("/auth/callback", async (req, res) => {
       { client_id: API_KEY, client_secret: API_SECRET, code },
     );
 
-    let { access_token: accessToken, refresh_token: refreshToken, expires_in: expiresIn } = tokenResponse.data;
-    console.log("[oauth] token prefix:", accessToken && accessToken.slice(0, 10));
+    let {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_in: expiresIn,
+    } = tokenResponse.data;
+    console.log(
+      "[oauth] token prefix:",
+      accessToken && accessToken.slice(0, 10),
+    );
     console.log("[oauth] response keys:", Object.keys(tokenResponse.data));
 
     // If OAuth still returned a non-expiring token, migrate it immediately via Token Exchange
     if (!expiresIn) {
-      console.log("[oauth] got non-expiring token — running migration exchange");
+      console.log(
+        "[oauth] got non-expiring token — running migration exchange",
+      );
       try {
         const migRes = await axios.post(
           "https://" + shop + "/admin/oauth/access_token",
@@ -129,29 +138,47 @@ app.get("/auth/callback", async (req, res) => {
             client_secret: API_SECRET,
             grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
             subject_token: accessToken,
-            subject_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
-            requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+            subject_token_type:
+              "urn:shopify:params:oauth:token-type:offline-access-token",
+            requested_token_type:
+              "urn:shopify:params:oauth:token-type:offline-access-token",
           },
         );
         if (migRes.data.expires_in) {
           accessToken = migRes.data.access_token;
           refreshToken = migRes.data.refresh_token || null;
           expiresIn = migRes.data.expires_in;
-          console.log("[oauth] migration succeeded, new prefix:", accessToken && accessToken.slice(0, 10));
+          console.log(
+            "[oauth] migration succeeded, new prefix:",
+            accessToken && accessToken.slice(0, 10),
+          );
         } else {
-          console.warn("[oauth] migration exchange returned non-expiring token — skipping");
+          console.warn(
+            "[oauth] migration exchange returned non-expiring token — skipping",
+          );
         }
       } catch (migErr) {
-        console.warn("[oauth] migration exchange failed:", migErr.message, JSON.stringify(migErr.response && migErr.response.data));
+        console.warn(
+          "[oauth] migration exchange failed:",
+          migErr.message,
+          JSON.stringify(migErr.response && migErr.response.data),
+        );
       }
     }
 
-    const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
+    const expiresAt = expiresIn
+      ? new Date(Date.now() + expiresIn * 1000)
+      : null;
 
     await prisma.session.upsert({
       where: { shop },
       update: { accessToken, refreshToken: refreshToken || null, expiresAt },
-      create: { shop, accessToken, refreshToken: refreshToken || null, expiresAt },
+      create: {
+        shop,
+        accessToken,
+        refreshToken: refreshToken || null,
+        expiresAt,
+      },
     });
 
     console.log("[oauth] session saved for:", shop, "| expiring:", !!expiresAt);
@@ -176,7 +203,8 @@ async function exchangeForOfflineToken(shop, sessionToken) {
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       subject_token: sessionToken,
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-      requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+      requested_token_type:
+        "urn:shopify:params:oauth:token-type:offline-access-token",
     },
   );
   return data; // return full response so caller can check expires_in
@@ -191,8 +219,10 @@ async function migrateOfflineToken(shop, existingOfflineToken) {
       client_secret: API_SECRET,
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       subject_token: existingOfflineToken,
-      subject_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
-      requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+      subject_token_type:
+        "urn:shopify:params:oauth:token-type:offline-access-token",
+      requested_token_type:
+        "urn:shopify:params:oauth:token-type:offline-access-token",
     },
   );
   return data;
@@ -215,18 +245,28 @@ async function requireSession(req, res, next) {
         : null;
       let refreshToken = exchangeData.refresh_token || null;
 
-      console.log("[auth] exchange prefix:", offlineToken && offlineToken.slice(0, 10), "| expiring:", !!expiresAt);
+      console.log(
+        "[auth] exchange prefix:",
+        offlineToken && offlineToken.slice(0, 10),
+        "| expiring:",
+        !!expiresAt,
+      );
 
       // If Token Exchange returned a non-expiring token, run migration exchange
       if (!expiresAt) {
-        console.log("[auth] non-expiring token from exchange — trying offline migration");
+        console.log(
+          "[auth] non-expiring token from exchange — trying offline migration",
+        );
         try {
           const migData = await migrateOfflineToken(shop, offlineToken);
           if (migData.expires_in) {
             offlineToken = migData.access_token;
             expiresAt = new Date(Date.now() + migData.expires_in * 1000);
             refreshToken = migData.refresh_token || null;
-            console.log("[auth] migration succeeded, new prefix:", offlineToken && offlineToken.slice(0, 10));
+            console.log(
+              "[auth] migration succeeded, new prefix:",
+              offlineToken && offlineToken.slice(0, 10),
+            );
           }
         } catch (migErr) {
           console.warn("[auth] migration failed:", migErr.message);
@@ -240,7 +280,9 @@ async function requireSession(req, res, next) {
           update: { accessToken: offlineToken, refreshToken, expiresAt },
           create: { shop, accessToken: offlineToken, refreshToken, expiresAt },
         })
-        .catch((e) => console.warn("[auth] DB cache update failed:", e.message));
+        .catch((e) =>
+          console.warn("[auth] DB cache update failed:", e.message),
+        );
 
       req.shop = shop;
       req.token = offlineToken;
@@ -691,18 +733,25 @@ app.get("/migrate-token", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ error: "Missing shop" });
   const session = await prisma.session.findUnique({ where: { shop } });
-  if (!session) return res.status(401).json({ error: "No session for this shop." });
+  if (!session)
+    return res.status(401).json({ error: "No session for this shop." });
 
   const currentToken = session.accessToken;
   const isNonExpiring = !session.expiresAt;
-  console.log("[migrate] current prefix:", currentToken && currentToken.slice(0, 10), "| nonExpiring:", isNonExpiring);
+  console.log(
+    "[migrate] current prefix:",
+    currentToken && currentToken.slice(0, 10),
+    "| nonExpiring:",
+    isNonExpiring,
+  );
 
   try {
     const migData = await migrateOfflineToken(shop, currentToken);
     if (!migData.expires_in) {
       return res.json({
         success: false,
-        message: "Shopify returned another non-expiring token. The app may need to be reinstalled.",
+        message:
+          "Shopify returned another non-expiring token. The app may need to be reinstalled.",
         tokenPrefix: migData.access_token && migData.access_token.slice(0, 10),
       });
     }
@@ -712,10 +761,17 @@ app.get("/migrate-token", async (req, res) => {
 
     await prisma.session.update({
       where: { shop },
-      data: { accessToken: newToken, refreshToken: newRefreshToken, expiresAt: newExpiresAt },
+      data: {
+        accessToken: newToken,
+        refreshToken: newRefreshToken,
+        expiresAt: newExpiresAt,
+      },
     });
 
-    console.log("[migrate] success, new prefix:", newToken && newToken.slice(0, 10));
+    console.log(
+      "[migrate] success, new prefix:",
+      newToken && newToken.slice(0, 10),
+    );
     res.json({
       success: true,
       message: "Token migrated to expiring offline token!",
@@ -725,7 +781,11 @@ app.get("/migrate-token", async (req, res) => {
       hasRefreshToken: !!newRefreshToken,
     });
   } catch (err) {
-    console.error("[migrate] error:", err.message, JSON.stringify(err.response && err.response.data));
+    console.error(
+      "[migrate] error:",
+      err.message,
+      JSON.stringify(err.response && err.response.data),
+    );
     res.status(500).json({
       success: false,
       error: err.message,
@@ -750,5 +810,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log("Server running on http://localhost:" + PORT),
 );
-
-// recheck deployment logs for any errors.
