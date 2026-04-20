@@ -132,21 +132,13 @@ async function requireSession(req, res, next) {
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
 
   const sessionToken = req.headers["x-shopify-session-token"];
-  const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
   const session = await prisma.session.findUnique({ where: { shop } });
 
   // ── Embedded context: App Bridge session token present ────────────────────
   if (sessionToken) {
-    // Only trust online tokens (shpua_ prefix) from Token Exchange.
-    // shpat_ (offline/OAuth) tokens are potentially non-expiring — never cache them.
-    if (session?.accessToken?.startsWith("shpua_") && session.expiresAt > fiveMinFromNow) {
-      req.shop = shop;
-      req.token = session.accessToken;
-      return next();
-    }
-
-    // Token Exchange: App Bridge session token → online access token.
-    // Online tokens (shpua_) are always expiring and never hit the April 2026 restriction.
+    // Token Exchange: App Bridge JWT → short-lived online access token (shpua_).
+    // We do NOT persist this to the database — persisting would overwrite the
+    // offline shpat_ token that Admin API theme calls require.
     try {
       const { data } = await axios.post(
         `https://${shop}/admin/oauth/access_token`,
@@ -160,16 +152,9 @@ async function requireSession(req, res, next) {
         },
       );
       console.log("[token-exchange] success, token prefix:", data.access_token?.slice(0, 8));
-      const expiresAt = data.expires_in
-        ? new Date(Date.now() + data.expires_in * 1000)
-        : new Date(Date.now() + 24 * 60 * 60 * 1000);
-      await prisma.session.upsert({
-        where: { shop },
-        update: { accessToken: data.access_token, refreshToken: null, expiresAt },
-        create: { shop, accessToken: data.access_token, refreshToken: null, expiresAt },
-      });
       req.shop = shop;
-      req.token = data.access_token;
+      req.token = data.access_token;          // online token — for UI/session use
+      req.offlineToken = session?.accessToken; // offline shpat_ — for Admin API writes
       return next();
     } catch (err) {
       console.error("[token-exchange] failed:", err.message, JSON.stringify(err.response?.data));
@@ -196,6 +181,7 @@ async function requireSession(req, res, next) {
   }
   req.shop = shop;
   req.token = session.accessToken;
+  req.offlineToken = session.accessToken;
   next();
 }
 
@@ -231,13 +217,10 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const { sectionId } = req.body;
     const { shop } = req;
 
-    // Always use the stored offline token (shpat_) for Admin API theme writes.
-    // req.token may be an online token (shpua_) from Token Exchange in embedded
-    // mode — online tokens can lack write_themes in user-scoped contexts.
-    const storedSession = await prisma.session.findUnique({ where: { shop } });
-    const token = storedSession?.accessToken?.startsWith("shpat_")
-      ? storedSession.accessToken
-      : req.token;
+    // Use the offline token (shpat_) for Admin API theme writes.
+    // req.offlineToken is the stored OAuth offline token; req.token is the
+    // short-lived online token from Token Exchange (insufficient for write_themes).
+    const token = req.offlineToken || req.token;
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
@@ -314,10 +297,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
     const { sectionId } = req.body;
     const { shop } = req;
 
-    const storedSession = await prisma.session.findUnique({ where: { shop } });
-    const token = storedSession?.accessToken?.startsWith("shpat_")
-      ? storedSession.accessToken
-      : req.token;
+    const token = req.offlineToken || req.token;
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
