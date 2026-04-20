@@ -186,10 +186,12 @@ async function requireSession(req, res, next) {
   // ── Embedded context: App Bridge session token present ────────────────────
   if (sessionToken) {
     try {
-      // Exchange App Bridge JWT → offline access token for Admin API writes.
-      // New public apps (after April 2026) automatically receive expiring tokens;
-      // no expiring=1 parameter needed (and it is NOT valid for this grant type).
-      const { data: offlineData } = await axios.post(
+      // Exchange App Bridge JWT → online access token.
+      // Online tokens are always expiring, so Shopify accepts them under the
+      // April 2026 enforcement. They carry the same scopes and work for all
+      // Admin API calls (including theme writes) during the merchant session.
+      // Offline token exchange via this grant type cannot produce expiring tokens.
+      const { data: onlineData } = await axios.post(
         `https://${shop}/admin/oauth/access_token`,
         {
           client_id: API_KEY,
@@ -197,16 +199,15 @@ async function requireSession(req, res, next) {
           grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
           subject_token: sessionToken,
           subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-          requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+          requested_token_type: "urn:shopify:params:oauth:token-type:online-access-token",
         },
       );
       console.log(
-        "[token-exchange] offline token prefix:", offlineData.access_token?.slice(0, 8),
-        "expires_in:", offlineData.expires_in,
-        "has_refresh:", !!offlineData.refresh_token,
+        "[token-exchange] online token prefix:", onlineData.access_token?.slice(0, 8),
+        "expires_in:", onlineData.expires_in,
       );
       req.shop = shop;
-      req.token = offlineData.access_token;
+      req.token = onlineData.access_token;
       return next();
     } catch (err) {
       console.error("[token-exchange] failed:", err.message, JSON.stringify(err.response?.data));
