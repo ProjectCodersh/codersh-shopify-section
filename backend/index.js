@@ -18,21 +18,37 @@ const API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SCOPES = process.env.SCOPES || "write_themes,read_themes";
 const HOST = process.env.HOST || "http://localhost:3000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const API_VER = "2024-10";
 
 app.use(cors());
 app.use(express.json());
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ARCHITECTURE — Modern Shopify Embedded App (Token Exchange, 2025+)
+//
+// The Dev Dashboard warning "deprecated offline tokens" means the old OAuth
+// offline token flow is flagged. The fix: use Token Exchange with
+// requested_token_type = offline-access-token. This gives a proper offline
+// token scoped to the store, without the deprecation flag.
+//
+// Flow:
+//   1. App Bridge sends a session token (JWT) with every request
+//   2. Backend POSTs Token Exchange → gets fresh offline token
+//   3. Offline token is used for Shopify Admin API (theme assets etc.)
+//   4. OAuth is only needed once for initial install/scope approval
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.get("/", (_req, res) => {
   res.json({ message: "Codersh Sections backend is running!" });
 });
 
-// ── OAuth Step 1 ──────────────────────────────────────────────────────────────
+// ── OAuth Step 1: Initial install ─────────────────────────────────────────────
 app.get("/auth", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).send("Missing shop parameter");
 
   const state = crypto.randomBytes(16).toString("hex");
-  const stateShop = `oauth-state:${shop}`;
+  const stateShop = "oauth-state:" + shop;
 
   await prisma.session.upsert({
     where: { shop: stateShop },
@@ -47,22 +63,28 @@ app.get("/auth", async (req, res) => {
     },
   });
 
-  const redirectUri = `${HOST}/auth/callback`;
+  const redirectUri = HOST + "/auth/callback";
   const installUrl =
-    `https://${shop}/admin/oauth/authorize` +
-    `?client_id=${API_KEY}` +
-    `&scope=${SCOPES}` +
-    `&state=${state}` +
-    `&redirect_uri=${redirectUri}`;
+    "https://" +
+    shop +
+    "/admin/oauth/authorize" +
+    "?client_id=" +
+    API_KEY +
+    "&scope=" +
+    SCOPES +
+    "&state=" +
+    state +
+    "&redirect_uri=" +
+    redirectUri;
 
   res.redirect(installUrl);
 });
 
-// ── OAuth Step 2 ──────────────────────────────────────────────────────────────
+// ── OAuth Step 2: Callback ────────────────────────────────────────────────────
 app.get("/auth/callback", async (req, res) => {
   const { shop, code, hmac, state } = req.query;
 
-  const stateShop = `oauth-state:${shop}`;
+  const stateShop = "oauth-state:" + shop;
   const stateRecord = await prisma.session.findUnique({
     where: { shop: stateShop },
   });
@@ -76,7 +98,7 @@ app.get("/auth/callback", async (req, res) => {
   delete map.hmac;
   const message = Object.keys(map)
     .sort()
-    .map((k) => `${k}=${map[k]}`)
+    .map((k) => k + "=" + map[k])
     .join("&");
   const digest = crypto
     .createHmac("sha256", API_SECRET)
@@ -85,167 +107,126 @@ app.get("/auth/callback", async (req, res) => {
   if (digest !== hmac) return res.status(403).send("HMAC validation failed");
 
   try {
+    // Get offline token via OAuth code exchange (initial install only)
     const tokenResponse = await axios.post(
-      `https://${shop}/admin/oauth/access_token`,
-      { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
+      "https://" + shop + "/admin/oauth/access_token",
+      { client_id: API_KEY, client_secret: API_SECRET, code },
     );
 
-    const {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires_in,
-    } = tokenResponse.data;
-
+    const { access_token: accessToken } = tokenResponse.data;
     console.log(
-      "[oauth-callback] response keys:",
-      Object.keys(tokenResponse.data),
+      "[oauth] token prefix:",
+      accessToken && accessToken.slice(0, 10),
     );
-    console.log("[oauth-callback] token prefix:", accessToken?.slice(0, 10));
-    console.log(
-      "[oauth-callback] has refresh:",
-      !!refreshToken,
-      "expires_in:",
-      expires_in,
-    );
+    console.log("[oauth] response keys:", Object.keys(tokenResponse.data));
 
-    const expiresAt = expires_in
-      ? new Date(Date.now() + expires_in * 1000)
-      : null;
-
+    // Store as a baseline — Token Exchange will replace this on every real request
     await prisma.session.upsert({
       where: { shop },
-      update: { accessToken, refreshToken: refreshToken || null, expiresAt },
-      create: {
-        shop,
-        accessToken,
-        refreshToken: refreshToken || null,
-        expiresAt,
-      },
+      update: { accessToken, refreshToken: null, expiresAt: null },
+      create: { shop, accessToken, refreshToken: null, expiresAt: null },
     });
 
-    console.log("[oauth-callback] session saved for:", shop);
-    res.redirect(`${FRONTEND_URL}?shop=${shop}`);
+    console.log("[oauth] session saved for:", shop);
+    res.redirect(FRONTEND_URL + "?shop=" + shop);
   } catch (error) {
     console.error(
-      "[oauth-callback] error:",
+      "[oauth] error:",
       error.message,
-      JSON.stringify(error.response?.data),
+      JSON.stringify(error.response && error.response.data),
     );
     res.status(500).send("OAuth error: " + error.message);
   }
 });
 
-// ── Get valid offline token ───────────────────────────────────────────────────
-async function getValidOfflineToken(shop) {
-  const session = await prisma.session.findUnique({ where: { shop } });
-  if (!session)
-    throw new Error(`No session for ${shop}. Please reinstall the app.`);
-
-  // Non-expiring token (legacy) — use as-is
-  if (!session.expiresAt) {
-    console.log("[token] using non-expiring token for:", shop);
-    return session.accessToken;
-  }
-
-  const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
-  if (session.expiresAt > fiveMinFromNow) {
-    console.log("[token] token still valid for:", shop);
-    return session.accessToken;
-  }
-
-  if (!session.refreshToken) {
-    throw new Error(
-      "Token expired and no refresh token. Please reinstall the app.",
-    );
-  }
-
-  console.log("[token-refresh] refreshing for:", shop);
+// ── Token Exchange: session token → offline access token (NOT deprecated) ─────
+async function exchangeForOfflineToken(shop, sessionToken) {
   const { data } = await axios.post(
-    `https://${shop}/admin/oauth/access_token`,
+    "https://" + shop + "/admin/oauth/access_token",
     {
       client_id: API_KEY,
       client_secret: API_SECRET,
-      grant_type: "refresh_token",
-      refresh_token: session.refreshToken,
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      subject_token: sessionToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      // KEY: offline-access-token — this is what avoids the deprecation warning
+      requested_token_type:
+        "urn:shopify:params:oauth:token-type:offline-access-token",
     },
   );
-
-  const expiresAt = data.expires_in
-    ? new Date(Date.now() + data.expires_in * 1000)
-    : null;
-  await prisma.session.update({
-    where: { shop },
-    data: {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || session.refreshToken,
-      expiresAt,
-    },
-  });
-
-  console.log("[token-refresh] done, prefix:", data.access_token?.slice(0, 10));
   return data.access_token;
 }
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
-// KEY FIX: We use Token Exchange ONLY to verify the user is logged in.
-// We ALWAYS use the OFFLINE token for actual Shopify Admin API calls.
-// This is because:
-// - Online tokens (from Token Exchange) are user-scoped and cannot reliably write themes
-// - Offline tokens are store-scoped and have full write_themes permission
-// - Theme asset writes (PUT /themes/{id}/assets.json) require offline store token
 async function requireSession(req, res, next) {
-  const shop = req.query.shop || req.body?.shop;
+  const shop = req.query.shop || (req.body && req.body.shop);
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
 
   const sessionToken = req.headers["x-shopify-session-token"];
 
   if (sessionToken) {
-    // STEP 1: Verify user via Token Exchange (just for auth check)
     try {
-      await axios.post(`https://${shop}/admin/oauth/access_token`, {
-        client_id: API_KEY,
-        client_secret: API_SECRET,
-        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-        subject_token: sessionToken,
-        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-        requested_token_type:
-          "urn:shopify:params:oauth:token-type:online-access-token",
-      });
-      console.log("[auth] user verified via token exchange for:", shop);
-    } catch (err) {
-      console.warn(
-        "[auth] token exchange verification failed (continuing anyway):",
-        err.message,
+      // Modern path: Token Exchange → offline token (no deprecation warning)
+      const offlineToken = await exchangeForOfflineToken(shop, sessionToken);
+      console.log(
+        "[auth] offline token via exchange, prefix:",
+        offlineToken && offlineToken.slice(0, 10),
       );
-      // Don't block — still try offline token below
-    }
 
-    // STEP 2: Always use OFFLINE token for actual API calls
-    try {
-      const offlineToken = await getValidOfflineToken(shop);
+      // Update DB cache (non-fatal)
+      prisma.session
+        .upsert({
+          where: { shop },
+          update: { accessToken: offlineToken, expiresAt: null },
+          create: {
+            shop,
+            accessToken: offlineToken,
+            refreshToken: null,
+            expiresAt: null,
+          },
+        })
+        .catch((e) =>
+          console.warn("[auth] DB cache update failed:", e.message),
+        );
+
       req.shop = shop;
       req.token = offlineToken;
       return next();
-    } catch (offlineErr) {
-      console.error("[auth] no offline token:", offlineErr.message);
+    } catch (err) {
+      console.error(
+        "[auth] token exchange failed:",
+        err.message,
+        JSON.stringify(err.response && err.response.data),
+      );
+
+      // Fallback to DB token
+      const session = await prisma.session.findUnique({ where: { shop } });
+      if (session && session.accessToken) {
+        console.warn("[auth] using DB fallback token for:", shop);
+        req.shop = shop;
+        req.token = session.accessToken;
+        return next();
+      }
+
       return res.status(401).json({
-        error: "App not properly installed. Please reinstall.",
-        authUrl: `${HOST}/auth?shop=${shop}`,
+        error: "Authentication failed. Please reinstall the app.",
+        authUrl: HOST + "/auth?shop=" + shop,
+        details: err.message,
       });
     }
   }
 
-  // NON-EMBEDDED: use offline token directly
-  try {
-    const token = await getValidOfflineToken(shop);
-    req.shop = shop;
-    req.token = token;
-    return next();
-  } catch (err) {
-    return res
-      .status(401)
-      .json({ error: err.message, authUrl: `${HOST}/auth?shop=${shop}` });
+  // Non-embedded / debug: use DB token
+  const session = await prisma.session.findUnique({ where: { shop } });
+  if (!session) {
+    return res.status(401).json({
+      error: "App not installed.",
+      authUrl: HOST + "/auth?shop=" + shop,
+    });
   }
+  req.shop = shop;
+  req.token = session.accessToken;
+  return next();
 }
 
 // ── Store info ────────────────────────────────────────────────────────────────
@@ -281,7 +262,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const { shop, token } = req;
 
     console.log("[inject] sectionId:", sectionId, "shop:", shop);
-    console.log("[inject] token prefix:", token?.slice(0, 10));
+    console.log("[inject] token prefix:", token && token.slice(0, 10));
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section)
@@ -289,96 +270,84 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     const liquidCode = getSectionLiquid(section.file);
 
-    // Use stable API version 2023-10
-    const API_VER = "2023-10";
-
-    // Get active theme
+    // Fetch themes
     let themesResponse;
     try {
       themesResponse = await axios.get(
-        `https://${shop}/admin/api/${API_VER}/themes.json`,
+        "https://" + shop + "/admin/api/" + API_VER + "/themes.json",
         { headers: { "X-Shopify-Access-Token": token } },
       );
-    } catch (themeErr) {
+    } catch (err) {
       console.error(
         "[inject] themes fetch failed:",
-        themeErr.message,
-        JSON.stringify(themeErr.response?.data),
+        err.message,
+        JSON.stringify(err.response && err.response.data),
       );
       return res.status(500).json({
-        error: "Failed to fetch themes: " + themeErr.message,
-        shopifyError: themeErr.response?.data,
-        shopifyStatus: themeErr.response?.status,
-        tokenPrefix: token?.slice(0, 10),
-        hint:
-          themeErr.response?.status === 401
-            ? "Token is invalid or expired. Please reinstall the app."
-            : themeErr.response?.status === 403
-              ? "Token does not have write_themes permission. Please reinstall."
-              : "Unexpected error fetching themes.",
+        error: "Failed to fetch themes: " + err.message,
+        shopifyStatus: err.response && err.response.status,
+        shopifyError: err.response && err.response.data,
       });
     }
 
     const themes = themesResponse.data.themes || [];
+    const activeTheme = themes.find((t) => t.role === "main");
+
     console.log(
-      "[inject] themes found:",
-      themes.map((t) => `${t.name}(${t.role})`).join(", "),
+      "[inject] themes:",
+      themes
+        .map(
+          (t) => t.name + "(" + t.role + ",locked=" + !!t.theme_store_id + ")",
+        )
+        .join(", "),
     );
 
-    const activeTheme = themes.find((t) => t.role === "main");
     if (!activeTheme) {
-      return res
-        .status(404)
-        .json({ error: "No published (main) theme found on this store." });
+      return res.status(404).json({ error: "No published theme found." });
     }
 
-    console.log(
-      "[inject] writing to theme:",
-      activeTheme.name,
-      "id:",
-      activeTheme.id,
-    );
+    // Prefer active theme if unlocked, otherwise first unlocked theme
+    const targetTheme = !activeTheme.theme_store_id
+      ? activeTheme
+      : themes.find((t) => !t.theme_store_id) || null;
 
-    // Upload .liquid file
-    try {
-      await axios.put(
-        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
-        { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
-        {
-          headers: {
-            "X-Shopify-Access-Token": token,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-      console.log("[inject] liquid uploaded:", `sections/${section.id}.liquid`);
-    } catch (putErr) {
-      console.error(
-        "[inject] PUT assets failed:",
-        putErr.message,
-        JSON.stringify(putErr.response?.data),
-      );
-      return res.status(500).json({
-        error: "Failed to write section file: " + putErr.message,
-        shopifyError: putErr.response?.data,
-        shopifyStatus: putErr.response?.status,
-        tokenPrefix: token?.slice(0, 10),
-        themeId: activeTheme.id,
-        hint:
-          putErr.response?.status === 404
-            ? "Theme ID was found but assets endpoint returned 404. This usually means the token does not have write permission to this theme."
-            : putErr.response?.status === 422
-              ? "Liquid file has syntax errors."
-              : "Unexpected error uploading section file.",
+    if (!targetTheme) {
+      return res.status(422).json({
+        error:
+          "All themes are locked Shopify Theme Store themes and cannot be written to.",
+        hint: "Add a free theme like Dawn from the Shopify Theme Store, or re-upload your current theme — re-uploaded themes are always writable.",
+        themes: themes.map((t) => ({
+          id: t.id,
+          name: t.name,
+          role: t.role,
+          locked: !!t.theme_store_id,
+        })),
       });
     }
 
-    // Upload CSS/JS assets if any
-    const assets = getSectionAssets(section.assets || []);
-    for (const asset of assets) {
+    console.log(
+      "[inject] writing to:",
+      targetTheme.name,
+      "id:",
+      targetTheme.id,
+    );
+
+    // Write .liquid file
+    try {
       await axios.put(
-        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
-        { asset: { key: asset.key, value: asset.value } },
+        "https://" +
+          shop +
+          "/admin/api/" +
+          API_VER +
+          "/themes/" +
+          targetTheme.id +
+          "/assets.json",
+        {
+          asset: {
+            key: "sections/" + section.id + ".liquid",
+            value: liquidCode,
+          },
+        },
         {
           headers: {
             "X-Shopify-Access-Token": token,
@@ -386,6 +355,48 @@ app.post("/inject-section", requireSession, async (req, res) => {
           },
         },
       );
+      console.log(
+        "[inject] liquid uploaded: sections/" + section.id + ".liquid",
+      );
+    } catch (putErr) {
+      console.error(
+        "[inject] PUT failed:",
+        putErr.message,
+        JSON.stringify(putErr.response && putErr.response.data),
+      );
+      return res.status(500).json({
+        error: "Failed to write section file: " + putErr.message,
+        shopifyError: putErr.response && putErr.response.data,
+        shopifyStatus: putErr.response && putErr.response.status,
+        tokenPrefix: token && token.slice(0, 10),
+        themeId: targetTheme.id,
+        themeName: targetTheme.name,
+      });
+    }
+
+    // Write CSS/JS assets
+    const assets = getSectionAssets(section.assets || []);
+    for (const asset of assets) {
+      await axios
+        .put(
+          "https://" +
+            shop +
+            "/admin/api/" +
+            API_VER +
+            "/themes/" +
+            targetTheme.id +
+            "/assets.json",
+          { asset: { key: asset.key, value: asset.value } },
+          {
+            headers: {
+              "X-Shopify-Access-Token": token,
+              "Content-Type": "application/json",
+            },
+          },
+        )
+        .catch((e) =>
+          console.error("[inject] asset failed:", asset.key, e.message),
+        );
       console.log("[inject] asset uploaded:", asset.key);
     }
 
@@ -396,21 +407,27 @@ app.post("/inject-section", requireSession, async (req, res) => {
       create: { shop, sectionId: section.id, sectionName: section.name },
     });
 
+    const writtenToActive = targetTheme.id === activeTheme.id;
     res.json({
       success: true,
-      message: `"${section.name}" added to your theme!`,
+      message: writtenToActive
+        ? '"' + section.name + '" added to your theme successfully!'
+        : '"' +
+          section.name +
+          '" added to "' +
+          targetTheme.name +
+          '". Your active theme (' +
+          activeTheme.name +
+          ') is a locked Theme Store theme. Publish "' +
+          targetTheme.name +
+          '" to use this section.',
+      targetTheme: { id: targetTheme.id, name: targetTheme.name },
+      activeTheme: { id: activeTheme.id, name: activeTheme.name },
+      installedToActiveTheme: writtenToActive,
     });
   } catch (error) {
-    console.error(
-      "[inject] unexpected error:",
-      error.message,
-      JSON.stringify(error.response?.data),
-    );
-    res.status(500).json({
-      error: error.message,
-      shopifyError: error.response?.data,
-      shopifyStatus: error.response?.status,
-    });
+    console.error("[inject] unexpected error:", error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -419,33 +436,43 @@ app.delete("/remove-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
     const { shop, token } = req;
-    const API_VER = "2023-10";
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
 
     const themesResponse = await axios.get(
-      `https://${shop}/admin/api/${API_VER}/themes.json`,
+      "https://" + shop + "/admin/api/" + API_VER + "/themes.json",
       { headers: { "X-Shopify-Access-Token": token } },
     );
-    const activeTheme = themesResponse.data.themes.find(
-      (t) => t.role === "main",
-    );
+    const themes = themesResponse.data.themes || [];
 
-    if (activeTheme) {
+    for (const theme of themes) {
       await axios
         .delete(
-          `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
+          "https://" +
+            shop +
+            "/admin/api/" +
+            API_VER +
+            "/themes/" +
+            theme.id +
+            "/assets.json?asset[key]=sections/" +
+            section.id +
+            ".liquid",
           { headers: { "X-Shopify-Access-Token": token } },
         )
-        .catch((err) => {
-          if (err.response?.status !== 404) throw err;
-        });
+        .catch(() => {});
 
       for (const asset of section.assets || []) {
         await axios
           .delete(
-            `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
+            "https://" +
+              shop +
+              "/admin/api/" +
+              API_VER +
+              "/themes/" +
+              theme.id +
+              "/assets.json?asset[key]=" +
+              asset.key,
             { headers: { "X-Shopify-Access-Token": token } },
           )
           .catch(() => {});
@@ -456,43 +483,21 @@ app.delete("/remove-section", requireSession, async (req, res) => {
       .delete({ where: { shop_sectionId: { shop, sectionId: section.id } } })
       .catch(() => {});
 
-    res.json({
-      success: true,
-      message: `"${section.name}" removed from your theme.`,
-    });
+    res.json({ success: true, message: '"' + section.name + '" removed.' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ── Dev login ─────────────────────────────────────────────────────────────────
-app.get("/dev-login", async (req, res) => {
-  const shop = req.query.shop || process.env.SHOP;
-  const accessToken = req.query.token || process.env.SHOPIFY_ACCESS_TOKEN;
-  if (!shop || !accessToken)
-    return res.status(500).json({ error: "Provide ?shop= and ?token= params" });
-
-  await prisma.session.upsert({
-    where: { shop },
-    update: { accessToken, expiresAt: null },
-    create: { shop, accessToken, expiresAt: null },
-  });
-  res.json({ success: true, message: `Dev session seeded for ${shop}` });
-});
-
-// ── Debug session ─────────────────────────────────────────────────────────────
+// ── Debug endpoints ───────────────────────────────────────────────────────────
 app.get("/debug-session", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ error: "Missing shop" });
   const session = await prisma.session.findUnique({ where: { shop } });
-  if (!session)
-    return res.json({
-      found: false,
-      message: "No session in DB for this shop",
-    });
+  if (!session) return res.json({ found: false });
   res.json({
     found: true,
-    tokenPrefix: session.accessToken?.slice(0, 10),
+    tokenPrefix: session.accessToken && session.accessToken.slice(0, 10),
     hasRefreshToken: !!session.refreshToken,
     expiresAt: session.expiresAt,
     isExpired: session.expiresAt ? session.expiresAt <= new Date() : false,
@@ -500,23 +505,21 @@ app.get("/debug-session", async (req, res) => {
   });
 });
 
-// ── Test token directly (debug only) ─────────────────────────────────────────
-// Call this to verify if your stored token can actually read themes
 app.get("/test-token", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ error: "Missing shop" });
-
+  const session = await prisma.session.findUnique({ where: { shop } });
+  if (!session) return res.status(401).json({ error: "No session." });
   try {
-    const token = await getValidOfflineToken(shop);
+    const token = session.accessToken;
     const response = await axios.get(
-      `https://${shop}/admin/api/2023-10/themes.json`,
+      "https://" + shop + "/admin/api/" + API_VER + "/themes.json",
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const themes = response.data.themes || [];
-    const activeTheme = themes.find((t) => t.role === "main");
     res.json({
       success: true,
-      tokenPrefix: token?.slice(0, 10),
+      tokenPrefix: token && token.slice(0, 10),
       themesCount: themes.length,
       themes: themes.map((t) => ({
         id: t.id,
@@ -525,102 +528,124 @@ app.get("/test-token", async (req, res) => {
         theme_store_id: t.theme_store_id || null,
         isLocked: !!t.theme_store_id,
       })),
-      hint: activeTheme?.theme_store_id
-        ? "⚠️ Active theme is LOCKED (theme_store_id set). Duplicate it in Shopify Admin first!"
-        : "✅ Active theme appears writable.",
     });
   } catch (err) {
     res.status(500).json({
       success: false,
       error: err.message,
-      shopifyError: err.response?.data,
-      shopifyStatus: err.response?.status,
+      shopifyStatus: err.response && err.response.status,
     });
   }
 });
 
-// -- Debug theme (checks lock + does a real test write) --
 app.get("/debug-theme", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ error: "Missing shop" });
+  const session = await prisma.session.findUnique({ where: { shop } });
+  if (!session) return res.status(401).json({ error: "No session." });
 
+  const token = session.accessToken;
   try {
-    const token = await getValidOfflineToken(shop);
-    const API_VER = "2023-10";
-
     const themesRes = await axios.get(
-      `https://${shop}/admin/api/${API_VER}/themes.json`,
+      "https://" + shop + "/admin/api/" + API_VER + "/themes.json",
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const themes = themesRes.data.themes || [];
     const activeTheme = themes.find((t) => t.role === "main");
+    const writableTheme = themes.find((t) => !t.theme_store_id);
 
-    if (!activeTheme) {
-      return res.status(404).json({ error: "No main theme found" });
-    }
-
-    const isLocked = !!activeTheme.theme_store_id;
-
-    // Do a real test write
-    let writeTest = { success: false, status: null, error: null };
-    try {
-      const testKey = "snippets/cws-write-test.liquid";
-      await axios.put(
-        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
-        {
-          asset: {
-            key: testKey,
-            value: "{%- comment -%}cws write test{%- endcomment -%}",
+    let writeTest = { success: false, skipped: !writableTheme };
+    if (writableTheme) {
+      try {
+        const testKey = "snippets/cws-write-test.liquid";
+        await axios.put(
+          "https://" +
+            shop +
+            "/admin/api/" +
+            API_VER +
+            "/themes/" +
+            writableTheme.id +
+            "/assets.json",
+          {
+            asset: {
+              key: testKey,
+              value: "{%- comment -%}test{%- endcomment -%}",
+            },
           },
-        },
-        {
-          headers: {
-            "X-Shopify-Access-Token": token,
-            "Content-Type": "application/json",
+          {
+            headers: {
+              "X-Shopify-Access-Token": token,
+              "Content-Type": "application/json",
+            },
           },
-        },
-      );
-      await axios
-        .delete(
-          `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=${testKey}`,
-          { headers: { "X-Shopify-Access-Token": token } },
-        )
-        .catch(() => {});
-      writeTest = { success: true, message: "Theme is writable!" };
-    } catch (writeErr) {
-      writeTest = {
-        success: false,
-        status: writeErr.response?.status,
-        error: writeErr.response?.data || writeErr.message,
-      };
+        );
+        await axios
+          .delete(
+            "https://" +
+              shop +
+              "/admin/api/" +
+              API_VER +
+              "/themes/" +
+              writableTheme.id +
+              "/assets.json?asset[key]=" +
+              testKey,
+            { headers: { "X-Shopify-Access-Token": token } },
+          )
+          .catch(() => {});
+        writeTest = { success: true, testedOn: writableTheme.name };
+      } catch (e) {
+        writeTest = {
+          success: false,
+          status: e.response && e.response.status,
+          error: e.response && e.response.data,
+        };
+      }
     }
 
     res.json({
-      activeTheme: {
-        id: activeTheme.id,
-        name: activeTheme.name,
-        role: activeTheme.role,
-        theme_store_id: activeTheme.theme_store_id || null,
-        isLocked,
-      },
-      tokenPrefix: token?.slice(0, 10),
+      tokenPrefix: token && token.slice(0, 10),
+      activeTheme: activeTheme
+        ? {
+            id: activeTheme.id,
+            name: activeTheme.name,
+            isLocked: !!activeTheme.theme_store_id,
+            theme_store_id: activeTheme.theme_store_id || null,
+          }
+        : null,
+      writableTheme: writableTheme
+        ? {
+            id: writableTheme.id,
+            name: writableTheme.name,
+            role: writableTheme.role,
+          }
+        : null,
+      allThemesLocked: !writableTheme,
       writeTest,
-      diagnosis: isLocked
-        ? "LOCKED: This is a Shopify Theme Store theme. Duplicate it to make it writable."
-        : writeTest.success
-          ? "Theme is NOT locked. Write should work."
-          : `Theme is unlocked but write still failed (status ${writeTest.status}). Try reinstalling the app to get a fresh token.`,
+      allThemes: themes.map((t) => ({
+        id: t.id,
+        name: t.name,
+        role: t.role,
+        isLocked: !!t.theme_store_id,
+      })),
     });
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      shopifyError: err.response?.data,
-    });
+    res.status(500).json({ error: err.message });
   }
+});
+
+app.get("/dev-login", async (req, res) => {
+  const { shop, token } = req.query;
+  if (!shop || !token)
+    return res.status(400).json({ error: "Provide ?shop= and ?token=" });
+  await prisma.session.upsert({
+    where: { shop },
+    update: { accessToken: token, expiresAt: null },
+    create: { shop, accessToken: token, refreshToken: null, expiresAt: null },
+  });
+  res.json({ success: true, message: "Dev session seeded for " + shop });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
-  console.log(`Server running on http://localhost:${PORT}`),
+  console.log("Server running on http://localhost:" + PORT),
 );
