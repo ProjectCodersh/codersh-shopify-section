@@ -185,10 +185,9 @@ async function requireSession(req, res, next) {
 
   // ── Embedded context: App Bridge session token present ────────────────────
   if (sessionToken) {
-    // Token Exchange: App Bridge JWT → short-lived online access token (shpua_).
-    // NOT persisted to DB — we keep the offline shpat_ in DB untouched.
     try {
-      const { data } = await axios.post(
+      // Exchange App Bridge JWT for an online token (authenticates this request)
+      const { data: onlineData } = await axios.post(
         `https://${shop}/admin/oauth/access_token`,
         {
           client_id: API_KEY,
@@ -199,9 +198,39 @@ async function requireSession(req, res, next) {
           requested_token_type: "urn:shopify:params:oauth:token-type:online-access-token",
         },
       );
-      console.log("[token-exchange] success, token prefix:", data.access_token?.slice(0, 8));
+      console.log("[token-exchange] online token prefix:", onlineData.access_token?.slice(0, 8));
       req.shop = shop;
-      req.token = data.access_token; // online token for UI/session use
+      req.token = onlineData.access_token;
+
+      // Persist an offline token to DB so getValidOfflineToken works.
+      // Only fetch if we don't already have a valid one stored.
+      const existing = await prisma.session.findUnique({ where: { shop } });
+      const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
+      const needsOfflineToken = !existing || (existing.expiresAt && existing.expiresAt <= fiveMinFromNow);
+
+      if (needsOfflineToken) {
+        const { data: offlineData } = await axios.post(
+          `https://${shop}/admin/oauth/access_token`,
+          {
+            client_id: API_KEY,
+            client_secret: API_SECRET,
+            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+            subject_token: sessionToken,
+            subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+            requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+          },
+        );
+        console.log("[token-exchange] offline token prefix:", offlineData.access_token?.slice(0, 8), "has refresh:", !!offlineData.refresh_token);
+        const expiresAt = offlineData.expires_in
+          ? new Date(Date.now() + offlineData.expires_in * 1000)
+          : new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await prisma.session.upsert({
+          where: { shop },
+          update: { accessToken: offlineData.access_token, refreshToken: offlineData.refresh_token || null, expiresAt },
+          create: { shop, accessToken: offlineData.access_token, refreshToken: offlineData.refresh_token || null, expiresAt },
+        });
+      }
+
       return next();
     } catch (err) {
       console.error("[token-exchange] failed:", err.message, JSON.stringify(err.response?.data));
