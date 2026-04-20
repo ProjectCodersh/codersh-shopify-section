@@ -218,6 +218,7 @@ async function requireSession(req, res, next) {
             subject_token: sessionToken,
             subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
             requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+            expiring: 1,
           },
         );
         console.log("[token-exchange] offline token prefix:", offlineData.access_token?.slice(0, 8), "has refresh:", !!offlineData.refresh_token);
