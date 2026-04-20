@@ -111,7 +111,7 @@ app.get("/auth/callback", async (req, res) => {
     // Get offline token via OAuth code exchange (initial install only)
     const tokenResponse = await axios.post(
       "https://" + shop + "/admin/oauth/access_token",
-      { client_id: API_KEY, client_secret: API_SECRET, code },
+      { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
     );
 
     let {
