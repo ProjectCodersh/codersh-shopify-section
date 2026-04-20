@@ -276,10 +276,12 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const liquidCode = getSectionLiquid(section.file);
 
     // Get active theme
+    console.log("[inject-section] token prefix:", token?.slice(0, 10), "shop:", shop);
     const themesResponse = await axios.get(
       `https://${shop}/admin/api/2025-07/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
+    console.log("[inject-section] themes count:", themesResponse.data.themes?.length, "roles:", themesResponse.data.themes?.map(t => t.role));
     const activeTheme = themesResponse.data.themes.find(
       (t) => t.role === "main",
     );
