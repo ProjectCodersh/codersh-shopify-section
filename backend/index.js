@@ -226,9 +226,13 @@ async function requireSession(req, res, next) {
       authUrl: `${HOST}/auth?shop=${shop}`,
     });
   }
-  req.shop = shop;
-  req.token = session.accessToken;
-  next();
+  try {
+    req.shop = shop;
+    req.token = await getValidOfflineToken(shop);
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: err.message, authUrl: `${HOST}/auth?shop=${shop}` });
+  }
 }
 
 // ── Store info ────────────────────────────────────────────────────────────────
