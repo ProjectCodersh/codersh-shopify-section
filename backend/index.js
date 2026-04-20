@@ -22,14 +22,11 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 app.use(cors());
 app.use(express.json());
 
-// ── Root ──────────────────────────────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.json({ message: "Codersh Sections backend is running!" });
 });
 
-// ── OAuth Step 1: begin install ───────────────────────────────────────────────
-// State is persisted in the DB (keyed by "oauth-state:<shop>") so server
-// restarts and multi-instance Render deploys can't cause CSRF false-positives.
+// ── OAuth Step 1 ──────────────────────────────────────────────────────────────
 app.get("/auth", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).send("Missing shop parameter");
@@ -39,8 +36,15 @@ app.get("/auth", async (req, res) => {
 
   await prisma.session.upsert({
     where: { shop: stateShop },
-    update: { accessToken: state, expiresAt: new Date(Date.now() + 10 * 60 * 1000) },
-    create: { shop: stateShop, accessToken: state, expiresAt: new Date(Date.now() + 10 * 60 * 1000) },
+    update: {
+      accessToken: state,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+    create: {
+      shop: stateShop,
+      accessToken: state,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
   });
 
   const redirectUri = `${HOST}/auth/callback`;
@@ -54,20 +58,20 @@ app.get("/auth", async (req, res) => {
   res.redirect(installUrl);
 });
 
-// ── OAuth Step 2: callback — exchange code for access token ───────────────────
+// ── OAuth Step 2 ──────────────────────────────────────────────────────────────
 app.get("/auth/callback", async (req, res) => {
   const { shop, code, hmac, state } = req.query;
 
-  // Read state from DB and delete it (one-time use)
   const stateShop = `oauth-state:${shop}`;
-  const stateRecord = await prisma.session.findUnique({ where: { shop: stateShop } });
+  const stateRecord = await prisma.session.findUnique({
+    where: { shop: stateShop },
+  });
   await prisma.session.delete({ where: { shop: stateShop } }).catch(() => {});
 
   if (!stateRecord || state !== stateRecord.accessToken) {
-    return res.status(403).send("State mismatch — possible CSRF attack");
+    return res.status(403).send("State mismatch");
   }
 
-  // Verify HMAC signature from Shopify
   const map = { ...req.query };
   delete map.hmac;
   const message = Object.keys(map)
@@ -81,55 +85,79 @@ app.get("/auth/callback", async (req, res) => {
   if (digest !== hmac) return res.status(403).send("HMAC validation failed");
 
   try {
-    // Exchange code for an expiring offline token.
-    // expiring=1 is mandatory for new public apps after April 2026.
+    // FIX: Do NOT pass expiring=1 — Shopify 2026 automatically gives expiring
+    // tokens to new public apps. Passing expiring=1 can break things.
     const tokenResponse = await axios.post(
       `https://${shop}/admin/oauth/access_token`,
-      { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
+      { client_id: API_KEY, client_secret: API_SECRET, code },
     );
+
     const {
       access_token: accessToken,
       refresh_token: refreshToken,
       expires_in,
     } = tokenResponse.data;
 
-    console.log("[oauth-callback] token prefix:", accessToken?.slice(0, 8), "has refresh:", !!refreshToken);
+    console.log(
+      "[oauth-callback] raw response keys:",
+      Object.keys(tokenResponse.data),
+    );
+    console.log(
+      "[oauth-callback] token prefix:",
+      accessToken?.slice(0, 10),
+      "has refresh:",
+      !!refreshToken,
+      "expires_in:",
+      expires_in,
+    );
 
-    // expires_in is 3600 (1 hour) for expiring tokens
     const expiresAt = expires_in
       ? new Date(Date.now() + expires_in * 1000)
-      : new Date(Date.now() + 24 * 60 * 60 * 1000);
+      : null;
 
     await prisma.session.upsert({
       where: { shop },
       update: { accessToken, refreshToken: refreshToken || null, expiresAt },
-      create: { shop, accessToken, refreshToken: refreshToken || null, expiresAt },
+      create: {
+        shop,
+        accessToken,
+        refreshToken: refreshToken || null,
+        expiresAt,
+      },
     });
 
+    console.log("[oauth-callback] session saved for:", shop);
     res.redirect(`${FRONTEND_URL}?shop=${shop}`);
   } catch (error) {
-    console.error("[oauth-callback] error:", error.message, JSON.stringify(error.response?.data));
+    console.error(
+      "[oauth-callback] error:",
+      error.message,
+      JSON.stringify(error.response?.data),
+    );
     res.status(500).send("OAuth error: " + error.message);
   }
 });
 
-// ── Offline token helper — refreshes if expired ───────────────────────────────
-// Always call this before making Admin API requests. Returns a valid shpat_ token.
+// ── Get valid offline token (refresh if needed) ───────────────────────────────
 async function getValidOfflineToken(shop) {
   const session = await prisma.session.findUnique({ where: { shop } });
-  if (!session) throw new Error(`No session found for ${shop}. App not installed.`);
+  if (!session)
+    throw new Error(`No session found for ${shop}. Please reinstall the app.`);
+
+  // No expiresAt = non-expiring token (legacy) — use as-is
+  if (!session.expiresAt) return session.accessToken;
 
   const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
-  const isExpired = session.expiresAt && session.expiresAt <= fiveMinFromNow;
-
+  const isExpired = session.expiresAt <= fiveMinFromNow;
   if (!isExpired) return session.accessToken;
 
-  // Token is about to expire — use refresh token to get a new one
   if (!session.refreshToken) {
-    throw new Error("Offline token expired and no refresh token available. Merchant must reinstall the app.");
+    throw new Error(
+      "Token expired and no refresh token. Please reinstall the app.",
+    );
   }
 
-  console.log("[token-refresh] refreshing offline token for", shop);
+  console.log("[token-refresh] refreshing for:", shop);
   const { data } = await axios.post(
     `https://${shop}/admin/oauth/access_token`,
     {
@@ -142,8 +170,7 @@ async function getValidOfflineToken(shop) {
 
   const expiresAt = data.expires_in
     ? new Date(Date.now() + data.expires_in * 1000)
-    : new Date(Date.now() + 60 * 60 * 1000);
-
+    : null;
   await prisma.session.update({
     where: { shop },
     data: {
@@ -153,28 +180,12 @@ async function getValidOfflineToken(shop) {
     },
   });
 
-  console.log("[token-refresh] new token prefix:", data.access_token?.slice(0, 8));
+  console.log(
+    "[token-refresh] refreshed, new prefix:",
+    data.access_token?.slice(0, 10),
+  );
   return data.access_token;
 }
-
-// ── Dev helper: seed a session for any store so you can test without OAuth ──────
-app.get("/dev-login", async (req, res) => {
-  const shop = req.query.shop || process.env.SHOP;
-  const accessToken = req.query.token || process.env.SHOPIFY_ACCESS_TOKEN;
-  if (!shop || !accessToken)
-    return res.status(500).json({
-      error:
-        "Provide ?shop= and ?token= params, or set SHOP + SHOPIFY_ACCESS_TOKEN in .env",
-    });
-
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  await prisma.session.upsert({
-    where: { shop },
-    update: { accessToken, expiresAt },
-    create: { shop, accessToken, expiresAt },
-  });
-  res.json({ success: true, message: `Dev session seeded for ${shop}` });
-});
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
 async function requireSession(req, res, next) {
@@ -183,15 +194,10 @@ async function requireSession(req, res, next) {
 
   const sessionToken = req.headers["x-shopify-session-token"];
 
-  // ── Embedded context: App Bridge session token present ────────────────────
   if (sessionToken) {
+    // EMBEDDED APP: Try Token Exchange first
     try {
-      // Exchange App Bridge JWT → online access token.
-      // Online tokens are always expiring, so Shopify accepts them under the
-      // April 2026 enforcement. They carry the same scopes and work for all
-      // Admin API calls (including theme writes) during the merchant session.
-      // Offline token exchange via this grant type cannot produce expiring tokens.
-      const { data: onlineData } = await axios.post(
+      const { data } = await axios.post(
         `https://${shop}/admin/oauth/access_token`,
         {
           client_id: API_KEY,
@@ -199,39 +205,37 @@ async function requireSession(req, res, next) {
           grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
           subject_token: sessionToken,
           subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-          requested_token_type: "urn:shopify:params:oauth:token-type:online-access-token",
+          requested_token_type:
+            "urn:shopify:params:oauth:token-type:online-access-token",
         },
       );
       console.log(
-        "[token-exchange] online token prefix:", onlineData.access_token?.slice(0, 8),
-        "expires_in:", onlineData.expires_in,
+        "[token-exchange] success, prefix:",
+        data.access_token?.slice(0, 10),
       );
       req.shop = shop;
-      req.token = onlineData.access_token;
+      req.token = data.access_token;
       return next();
     } catch (err) {
-      console.error("[token-exchange] failed:", err.message, JSON.stringify(err.response?.data));
-      return res.status(401).json({
-        error: "Token exchange failed",
-        details: err.response?.data,
-      });
+      console.error(
+        "[token-exchange] FAILED:",
+        err.message,
+        JSON.stringify(err.response?.data),
+      );
+      // Fallback to offline token from DB
     }
   }
 
-  // ── Non-embedded context: dev-login / local dev (no App Bridge) ───────────
-  const session = await prisma.session.findUnique({ where: { shop } });
-  if (!session) {
-    return res.status(401).json({
-      error: "Not installed",
-      authUrl: `${HOST}/auth?shop=${shop}`,
-    });
-  }
+  // NON-EMBEDDED or Token Exchange fallback: use offline token from DB
   try {
+    const token = await getValidOfflineToken(shop);
     req.shop = shop;
-    req.token = await getValidOfflineToken(shop);
-    next();
+    req.token = token;
+    return next();
   } catch (err) {
-    return res.status(401).json({ error: err.message, authUrl: `${HOST}/auth?shop=${shop}` });
+    return res
+      .status(401)
+      .json({ error: err.message, authUrl: `${HOST}/auth?shop=${shop}` });
   }
 }
 
@@ -240,7 +244,7 @@ app.get("/store-info", requireSession, (req, res) => {
   res.json({ shop: req.shop });
 });
 
-// ── Get all sections + installed state ───────────────────────────────────────
+// ── List sections ─────────────────────────────────────────────────────────────
 app.get("/sections", requireSession, async (req, res) => {
   try {
     const installed = await prisma.installedSection.findMany({
@@ -261,36 +265,70 @@ app.get("/sections", requireSession, async (req, res) => {
   }
 });
 
-// ── Inject a section into the active theme ────────────────────────────────────
+// ── Inject section ────────────────────────────────────────────────────────────
 app.post("/inject-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
-    const { shop } = req;
+    const { shop, token } = req;
 
-    // req.token is already a valid offline token set by requireSession.
-    const token = req.token;
+    console.log(
+      "[inject] sectionId:",
+      sectionId,
+      "shop:",
+      shop,
+      "token prefix:",
+      token?.slice(0, 10),
+    );
 
     const section = SECTIONS.find((s) => s.id === sectionId);
-    if (!section) return res.status(404).json({ error: "Section not found" });
+    if (!section)
+      return res.status(404).json({ error: "Section not found in app" });
 
     const liquidCode = getSectionLiquid(section.file);
 
-    // Get active theme
-    console.log("[inject-section] token prefix:", token?.slice(0, 10), "shop:", shop);
-    const themesResponse = await axios.get(
-      `https://${shop}/admin/api/2025-07/themes.json`,
-      { headers: { "X-Shopify-Access-Token": token } },
-    );
-    console.log("[inject-section] themes count:", themesResponse.data.themes?.length, "roles:", themesResponse.data.themes?.map(t => t.role));
-    const activeTheme = themesResponse.data.themes.find(
-      (t) => t.role === "main",
-    );
-    if (!activeTheme)
-      return res.status(404).json({ error: "No active theme found" });
+    // FIX: Use stable API version 2024-10 instead of 2025-07
+    const API_VER = "2024-10";
 
-    // Inject liquid file
+    let themesResponse;
+    try {
+      themesResponse = await axios.get(
+        `https://${shop}/admin/api/${API_VER}/themes.json`,
+        { headers: { "X-Shopify-Access-Token": token } },
+      );
+    } catch (themeErr) {
+      console.error(
+        "[inject] themes fetch error:",
+        themeErr.message,
+        JSON.stringify(themeErr.response?.data),
+      );
+      return res.status(500).json({
+        error: "Failed to fetch themes: " + themeErr.message,
+        shopifyError: themeErr.response?.data,
+        shopifyStatus: themeErr.response?.status,
+        tokenPrefix: token?.slice(0, 10),
+      });
+    }
+
+    const themes = themesResponse.data.themes || [];
+    console.log(
+      "[inject] themes:",
+      themes.map((t) => `${t.name}(${t.role})`).join(", "),
+    );
+
+    const activeTheme = themes.find((t) => t.role === "main");
+    if (!activeTheme)
+      return res.status(404).json({ error: "No active (main) theme found" });
+
+    console.log(
+      "[inject] active theme:",
+      activeTheme.name,
+      "id:",
+      activeTheme.id,
+    );
+
+    // Upload liquid file
     await axios.put(
-      `https://${shop}/admin/api/2025-07/themes/${activeTheme.id}/assets.json`,
+      `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
       { asset: { key: `sections/${section.id}.liquid`, value: liquidCode } },
       {
         headers: {
@@ -300,11 +338,13 @@ app.post("/inject-section", requireSession, async (req, res) => {
       },
     );
 
-    // Inject asset files (CSS, JS) if any
+    console.log("[inject] liquid uploaded:", `sections/${section.id}.liquid`);
+
+    // Upload CSS/JS assets if any
     const assets = getSectionAssets(section.assets || []);
     for (const asset of assets) {
       await axios.put(
-        `https://${shop}/admin/api/2025-07/themes/${activeTheme.id}/assets.json`,
+        `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json`,
         { asset: { key: asset.key, value: asset.value } },
         {
           headers: {
@@ -315,7 +355,6 @@ app.post("/inject-section", requireSession, async (req, res) => {
       );
     }
 
-    // Save to database
     await prisma.installedSection.upsert({
       where: { shop_sectionId: { shop, sectionId: section.id } },
       update: { installedAt: new Date() },
@@ -327,9 +366,9 @@ app.post("/inject-section", requireSession, async (req, res) => {
       message: `"${section.name}" added to your theme!`,
     });
   } catch (error) {
-    console.error("[inject-section] Error:", error.message);
     console.error(
-      "[inject-section] Shopify response:",
+      "[inject] error:",
+      error.message,
       JSON.stringify(error.response?.data),
     );
     res.status(500).json({
@@ -340,49 +379,46 @@ app.post("/inject-section", requireSession, async (req, res) => {
   }
 });
 
-// ── Remove a section ──────────────────────────────────────────────────────────
+// ── Remove section ────────────────────────────────────────────────────────────
 app.delete("/remove-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
-    const { shop } = req;
-    const token = req.token;
+    const { shop, token } = req;
+    const API_VER = "2024-10";
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
 
     const themesResponse = await axios.get(
-      `https://${shop}/admin/api/2025-07/themes.json`,
+      `https://${shop}/admin/api/${API_VER}/themes.json`,
       { headers: { "X-Shopify-Access-Token": token } },
     );
     const activeTheme = themesResponse.data.themes.find(
       (t) => t.role === "main",
     );
 
-    // Delete liquid from theme (ignore 404 — file may not exist in theme)
-    await axios
-      .delete(
-        `https://${shop}/admin/api/2025-07/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
-        { headers: { "X-Shopify-Access-Token": token } },
-      )
-      .catch((err) => {
-        if (err.response?.status !== 404) throw err;
-      });
-
-    // Delete asset files too if any
-    for (const asset of section.assets || []) {
+    if (activeTheme) {
       await axios
         .delete(
-          `https://${shop}/admin/api/2025-07/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
+          `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=sections/${section.id}.liquid`,
           { headers: { "X-Shopify-Access-Token": token } },
         )
-        .catch(() => {});
+        .catch((err) => {
+          if (err.response?.status !== 404) throw err;
+        });
+
+      for (const asset of section.assets || []) {
+        await axios
+          .delete(
+            `https://${shop}/admin/api/${API_VER}/themes/${activeTheme.id}/assets.json?asset[key]=${asset.key}`,
+            { headers: { "X-Shopify-Access-Token": token } },
+          )
+          .catch(() => {});
+      }
     }
 
-    // Remove from database
     await prisma.installedSection
-      .delete({
-        where: { shop_sectionId: { shop, sectionId: section.id } },
-      })
+      .delete({ where: { shop_sectionId: { shop, sectionId: section.id } } })
       .catch(() => {});
 
     res.json({
@@ -392,6 +428,41 @@ app.delete("/remove-section", requireSession, async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// ── Dev login helper ──────────────────────────────────────────────────────────
+app.get("/dev-login", async (req, res) => {
+  const shop = req.query.shop || process.env.SHOP;
+  const accessToken = req.query.token || process.env.SHOPIFY_ACCESS_TOKEN;
+  if (!shop || !accessToken)
+    return res.status(500).json({ error: "Provide ?shop= and ?token= params" });
+
+  await prisma.session.upsert({
+    where: { shop },
+    update: { accessToken, expiresAt: null },
+    create: { shop, accessToken, expiresAt: null },
+  });
+  res.json({ success: true, message: `Dev session seeded for ${shop}` });
+});
+
+// ── Debug session endpoint ────────────────────────────────────────────────────
+app.get("/debug-session", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).json({ error: "Missing shop" });
+  const session = await prisma.session.findUnique({ where: { shop } });
+  if (!session)
+    return res.json({
+      found: false,
+      message: "No session in DB for this shop",
+    });
+  res.json({
+    found: true,
+    tokenPrefix: session.accessToken?.slice(0, 10),
+    hasRefreshToken: !!session.refreshToken,
+    expiresAt: session.expiresAt,
+    isExpired: session.expiresAt ? session.expiresAt <= new Date() : false,
+    isNonExpiring: !session.expiresAt,
+  });
 });
 
 const PORT = process.env.PORT || 3000;
