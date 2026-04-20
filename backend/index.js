@@ -186,8 +186,10 @@ async function requireSession(req, res, next) {
   // ── Embedded context: App Bridge session token present ────────────────────
   if (sessionToken) {
     try {
-      // Exchange App Bridge JWT for an online token (authenticates this request)
-      const { data: onlineData } = await axios.post(
+      // Exchange App Bridge JWT → offline access token for Admin API writes.
+      // New public apps (after April 2026) automatically receive expiring tokens;
+      // no expiring=1 parameter needed (and it is NOT valid for this grant type).
+      const { data: offlineData } = await axios.post(
         `https://${shop}/admin/oauth/access_token`,
         {
           client_id: API_KEY,
@@ -195,43 +197,16 @@ async function requireSession(req, res, next) {
           grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
           subject_token: sessionToken,
           subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-          requested_token_type: "urn:shopify:params:oauth:token-type:online-access-token",
+          requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
         },
       );
-      console.log("[token-exchange] online token prefix:", onlineData.access_token?.slice(0, 8));
+      console.log(
+        "[token-exchange] offline token prefix:", offlineData.access_token?.slice(0, 8),
+        "expires_in:", offlineData.expires_in,
+        "has_refresh:", !!offlineData.refresh_token,
+      );
       req.shop = shop;
-      req.token = onlineData.access_token;
-
-      // Persist an offline token to DB so getValidOfflineToken works.
-      // Only fetch if we don't already have a valid one stored.
-      const existing = await prisma.session.findUnique({ where: { shop } });
-      const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000);
-      const needsOfflineToken = !existing || (existing.expiresAt && existing.expiresAt <= fiveMinFromNow);
-
-      if (needsOfflineToken) {
-        const { data: offlineData } = await axios.post(
-          `https://${shop}/admin/oauth/access_token`,
-          {
-            client_id: API_KEY,
-            client_secret: API_SECRET,
-            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-            subject_token: sessionToken,
-            subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-            requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
-            expiring: 1,
-          },
-        );
-        console.log("[token-exchange] offline token prefix:", offlineData.access_token?.slice(0, 8), "has refresh:", !!offlineData.refresh_token);
-        const expiresAt = offlineData.expires_in
-          ? new Date(Date.now() + offlineData.expires_in * 1000)
-          : new Date(Date.now() + 24 * 60 * 60 * 1000);
-        await prisma.session.upsert({
-          where: { shop },
-          update: { accessToken: offlineData.access_token, refreshToken: offlineData.refresh_token || null, expiresAt },
-          create: { shop, accessToken: offlineData.access_token, refreshToken: offlineData.refresh_token || null, expiresAt },
-        });
-      }
-
+      req.token = offlineData.access_token;
       return next();
     } catch (err) {
       console.error("[token-exchange] failed:", err.message, JSON.stringify(err.response?.data));
@@ -287,9 +262,8 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const { sectionId } = req.body;
     const { shop } = req;
 
-    // Always use the offline token (shpat_) for Admin API theme writes.
-    // getValidOfflineToken handles automatic refresh if the token has expired.
-    const token = await getValidOfflineToken(shop);
+    // req.token is already a valid offline token set by requireSession.
+    const token = req.token;
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
@@ -364,8 +338,7 @@ app.delete("/remove-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
     const { shop } = req;
-
-    const token = await getValidOfflineToken(shop);
+    const token = req.token;
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
