@@ -229,7 +229,15 @@ app.get("/sections", requireSession, async (req, res) => {
 app.post("/inject-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
-    const { shop, token } = req;
+    const { shop } = req;
+
+    // Always use the stored offline token (shpat_) for Admin API theme writes.
+    // req.token may be an online token (shpua_) from Token Exchange in embedded
+    // mode — online tokens can lack write_themes in user-scoped contexts.
+    const storedSession = await prisma.session.findUnique({ where: { shop } });
+    const token = storedSession?.accessToken?.startsWith("shpat_")
+      ? storedSession.accessToken
+      : req.token;
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
@@ -304,7 +312,12 @@ app.post("/inject-section", requireSession, async (req, res) => {
 app.delete("/remove-section", requireSession, async (req, res) => {
   try {
     const { sectionId } = req.body;
-    const { shop, token } = req;
+    const { shop } = req;
+
+    const storedSession = await prisma.session.findUnique({ where: { shop } });
+    const token = storedSession?.accessToken?.startsWith("shpat_")
+      ? storedSession.accessToken
+      : req.token;
 
     const section = SECTIONS.find((s) => s.id === sectionId);
     if (!section) return res.status(404).json({ error: "Section not found" });
