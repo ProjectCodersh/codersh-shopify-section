@@ -1,0 +1,16 @@
+name = "Codersh-Sections"
+client_id = "ae556ad0a8d99425d0dd891c6190563a"
+application_url = "https://codersh-shopify-section.vercel.app"
+embedded = true
+
+[access_scopes]
+scopes = "read_themes,write_themes"
+
+[auth]
+redirect_urls = ["https://codersh-shopify-section-backend.onrender.com/auth/callback"]
+
+[webhooks]
+api_version = "2025-01"
+
+[pos]
+embedded = false
