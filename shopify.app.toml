@@ -1,16 +1,23 @@
-name = "Codersh-Sections"
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
 client_id = "ae556ad0a8d99425d0dd891c6190563a"
+name = "Codersh-Sections"
 application_url = "https://codersh-shopify-section.vercel.app"
 embedded = true
 
+[webhooks]
+api_version = "2026-07"
+
 [access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_themes,write_themes"
+optional_scopes = [ ]
+use_legacy_install_flow = false
 
 [auth]
-redirect_urls = ["https://codersh-shopify-section-backend.onrender.com/auth/callback"]
-
-[webhooks]
-api_version = "2025-01"
+redirect_urls = [
+  "https://codersh-shopify-section-backend.onrender.com/auth/callback"
+]
 
 [pos]
 embedded = false
