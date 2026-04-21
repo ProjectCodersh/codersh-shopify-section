@@ -321,9 +321,25 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(404).json({ error: "No published theme found." });
     }
 
-    // Always write to the active theme — theme_store_id is informational only
-    // and does NOT prevent API writes. Shopify allows writing to any theme.
-    const targetTheme = activeTheme;
+    // Shopify blocks ALL API writes to Theme Store themes (theme_store_id set),
+    // returning 404 even with write_themes scope. Only custom/uploaded themes
+    // (theme_store_id: null) are writable via the API.
+    const targetTheme = !activeTheme.theme_store_id
+      ? activeTheme
+      : themes.find((t) => !t.theme_store_id) || null;
+
+    if (!targetTheme) {
+      return res.status(422).json({
+        error: "Your active theme is from the Shopify Theme Store and cannot be modified by apps via the API.",
+        fix: "Download your theme as a zip (Themes → ··· → Download), then re-upload it (Themes → Add theme → Upload zip). The re-uploaded copy will be writable.",
+        themes: themes.map((t) => ({
+          id: t.id,
+          name: t.name,
+          role: t.role,
+          writable: !t.theme_store_id,
+        })),
+      });
+    }
 
     console.log(
       "[inject] writing to:",
@@ -407,11 +423,14 @@ app.post("/inject-section", requireSession, async (req, res) => {
       create: { shop, sectionId: section.id, sectionName: section.name },
     });
 
+    const isActive = targetTheme.id === activeTheme.id;
     res.json({
       success: true,
-      message: '"' + section.name + '" added to your theme successfully!',
+      message: isActive
+        ? '"' + section.name + '" added to your theme successfully!'
+        : '"' + section.name + '" added to "' + targetTheme.name + '". To use it, publish this theme.',
       targetTheme: { id: targetTheme.id, name: targetTheme.name },
-      installedToActiveTheme: true,
+      installedToActiveTheme: isActive,
     });
   } catch (error) {
     console.error("[inject] unexpected error:", error.message);
