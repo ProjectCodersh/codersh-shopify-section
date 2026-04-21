@@ -321,24 +321,9 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(404).json({ error: "No published theme found." });
     }
 
-    // Prefer active theme if unlocked, otherwise first unlocked theme
-    const targetTheme = !activeTheme.theme_store_id
-      ? activeTheme
-      : themes.find((t) => !t.theme_store_id) || null;
-
-    if (!targetTheme) {
-      return res.status(422).json({
-        error:
-          "All themes are locked Shopify Theme Store themes and cannot be written to.",
-        hint: "Add a free theme like Dawn from the Shopify Theme Store, or re-upload your current theme — re-uploaded themes are always writable.",
-        themes: themes.map((t) => ({
-          id: t.id,
-          name: t.name,
-          role: t.role,
-          locked: !!t.theme_store_id,
-        })),
-      });
-    }
+    // Always write to the active theme — theme_store_id is informational only
+    // and does NOT prevent API writes. Shopify allows writing to any theme.
+    const targetTheme = activeTheme;
 
     console.log(
       "[inject] writing to:",
@@ -422,23 +407,11 @@ app.post("/inject-section", requireSession, async (req, res) => {
       create: { shop, sectionId: section.id, sectionName: section.name },
     });
 
-    const writtenToActive = targetTheme.id === activeTheme.id;
     res.json({
       success: true,
-      message: writtenToActive
-        ? '"' + section.name + '" added to your theme successfully!'
-        : '"' +
-          section.name +
-          '" added to "' +
-          targetTheme.name +
-          '". Your active theme (' +
-          activeTheme.name +
-          ') is a locked Theme Store theme. Publish "' +
-          targetTheme.name +
-          '" to use this section.',
+      message: '"' + section.name + '" added to your theme successfully!',
       targetTheme: { id: targetTheme.id, name: targetTheme.name },
-      activeTheme: { id: activeTheme.id, name: activeTheme.name },
-      installedToActiveTheme: writtenToActive,
+      installedToActiveTheme: true,
     });
   } catch (error) {
     console.error("[inject] unexpected error:", error.message);
