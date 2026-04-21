@@ -376,18 +376,21 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(404).json({ error: "No published theme found." });
     }
 
-    // Shopify blocks ALL API writes to Theme Store themes (theme_store_id set),
-    // returning 404 even with write_themes scope. Only custom/uploaded themes
-    // (theme_store_id: null) are writable via the API.
-    const targetTheme = !activeTheme.theme_store_id
-      ? activeTheme
-      : themes.find((t) => !t.theme_store_id) || null;
+    // Shopify blocks ALL API writes to Theme Store themes (theme_store_id set).
+    // Build a priority-ordered list of writable candidate themes:
+    //   1. Active theme if not from Theme Store
+    //   2. All other non-Theme-Store themes (unpublished custom/uploaded themes)
+    // We try each in order and use the first one that accepts a write.
+    const writableCandidates = [
+      ...(!activeTheme.theme_store_id ? [activeTheme] : []),
+      ...themes.filter((t) => !t.theme_store_id && t.id !== activeTheme.id),
+    ];
 
-    if (!targetTheme) {
+    if (writableCandidates.length === 0) {
       return res.status(422).json({
         error:
           "Your active theme is from the Shopify Theme Store and cannot be modified by apps via the API.",
-        fix: "Download your theme as a zip (Themes → ··· → Download), then re-upload it (Themes → Add theme → Upload zip). The re-uploaded copy will be writable.",
+        fix: "Upload a custom theme: Themes → Add theme → Upload zip file.",
         themes: themes.map((t) => ({
           id: t.id,
           name: t.name,
@@ -397,52 +400,68 @@ app.post("/inject-section", requireSession, async (req, res) => {
       });
     }
 
-    console.log(
-      "[inject] writing to:",
-      targetTheme.name,
-      "id:",
-      targetTheme.id,
-    );
+    const sectionKey = "sections/" + section.id + ".liquid";
+    let targetTheme = null;
+    let lastPutErr = null;
 
-    // Write .liquid file
-    try {
-      await axios.put(
-        "https://" +
-          shop +
-          "/admin/api/" +
-          API_VER +
-          "/themes/" +
-          targetTheme.id +
-          "/assets.json",
-        {
-          asset: {
-            key: "sections/" + section.id + ".liquid",
-            value: liquidCode,
-          },
-        },
-        {
-          headers: {
-            "X-Shopify-Access-Token": token,
-            "Content-Type": "application/json",
-          },
-        },
-      );
+    for (const candidate of writableCandidates) {
       console.log(
-        "[inject] liquid uploaded: sections/" + section.id + ".liquid",
+        "[inject] trying theme:",
+        candidate.name,
+        "id:",
+        candidate.id,
       );
-    } catch (putErr) {
-      console.error(
-        "[inject] PUT failed:",
-        putErr.message,
-        JSON.stringify(putErr.response && putErr.response.data),
-      );
+      try {
+        await axios.put(
+          "https://" +
+            shop +
+            "/admin/api/" +
+            API_VER +
+            "/themes/" +
+            candidate.id +
+            "/assets.json",
+          { asset: { key: sectionKey, value: liquidCode } },
+          {
+            headers: {
+              "X-Shopify-Access-Token": token,
+              "Content-Type": "application/json",
+            },
+          },
+        );
+        targetTheme = candidate;
+        console.log(
+          "[inject] liquid uploaded to:",
+          candidate.name,
+          "→",
+          sectionKey,
+        );
+        break;
+      } catch (err) {
+        console.warn(
+          "[inject] PUT failed for theme:",
+          candidate.name,
+          "status:",
+          err.response && err.response.status,
+          JSON.stringify(err.response && err.response.data),
+        );
+        lastPutErr = err;
+      }
+    }
+
+    if (!targetTheme) {
+      // All candidates failed
+      console.error("[inject] all theme write attempts failed");
       return res.status(500).json({
-        error: "Failed to write section file: " + putErr.message,
-        shopifyError: putErr.response && putErr.response.data,
-        shopifyStatus: putErr.response && putErr.response.status,
-        tokenPrefix: token && token.slice(0, 10),
-        themeId: targetTheme.id,
-        themeName: targetTheme.name,
+        error:
+          "Failed to write section file: " + (lastPutErr && lastPutErr.message),
+        shopifyError:
+          lastPutErr && lastPutErr.response && lastPutErr.response.data,
+        shopifyStatus:
+          lastPutErr && lastPutErr.response && lastPutErr.response.status,
+        triedThemes: writableCandidates.map((t) => ({
+          id: t.id,
+          name: t.name,
+        })),
       });
     }
 
