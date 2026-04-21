@@ -114,13 +114,19 @@ app.get("/auth/callback", async (req, res) => {
       { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
     );
 
-    const { access_token: accessToken, expires_in: expiresIn } = tokenResponse.data;
-    console.log("[oauth] token prefix:", accessToken && accessToken.slice(0, 10));
+    const { access_token: accessToken, expires_in: expiresIn } =
+      tokenResponse.data;
+    console.log(
+      "[oauth] token prefix:",
+      accessToken && accessToken.slice(0, 10),
+    );
     console.log("[oauth] expiring:", !!expiresIn);
 
     // Save OAuth token to DB — Token Exchange in requireSession will replace
     // it with a proper online token on the first embedded request.
-    const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
+    const expiresAt = expiresIn
+      ? new Date(Date.now() + expiresIn * 1000)
+      : null;
     await prisma.session.upsert({
       where: { shop },
       update: { accessToken, refreshToken: null, expiresAt },
@@ -164,11 +170,32 @@ async function requireSession(req, res, next) {
   const shop = req.query.shop || (req.body && req.body.shop);
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
 
+  // ── Step 1: Check DB for a valid, non-expired, expiring token ─────────────
+  // Prefer the DB token. Token Exchange is only used as a fallback when the
+  // DB token is missing or expired. This avoids the issue where Shopify's
+  // Token Exchange endpoint returns non-expiring tokens for apps not yet
+  // fully enrolled in the expiring-offline-tokens programme.
+  const session = await prisma.session.findUnique({ where: { shop } });
+  const now = new Date();
+  const dbTokenValid = session && session.expiresAt && session.expiresAt > now;
+
+  if (dbTokenValid) {
+    console.log(
+      "[auth] using DB token prefix:",
+      session.accessToken && session.accessToken.slice(0, 10),
+      "| expiresAt:",
+      session.expiresAt,
+    );
+    req.shop = shop;
+    req.token = session.accessToken;
+    return next();
+  }
+
+  // ── Step 2: No valid DB token — try Token Exchange with App Bridge JWT ─────
   const sessionToken = req.headers["x-shopify-session-token"];
 
   if (sessionToken) {
     try {
-      // Token Exchange: App Bridge JWT → expiring offline token
       const exchangeData = await exchangeForOfflineToken(shop, sessionToken);
       const offlineToken = exchangeData.access_token;
       const expiresAt = exchangeData.expires_in
@@ -176,10 +203,10 @@ async function requireSession(req, res, next) {
         : null;
 
       console.log(
-        "[auth] offline token prefix:",
+        "[auth] token exchange prefix:",
         offlineToken && offlineToken.slice(0, 10),
         "| expires_in:",
-        exchangeData.expires_in || "NON-EXPIRING — run: npx shopify app config link && npx shopify app deploy",
+        exchangeData.expires_in || "NON-EXPIRING",
       );
 
       if (!offlineToken) {
@@ -189,22 +216,41 @@ async function requireSession(req, res, next) {
         });
       }
 
-      // Reject non-expiring tokens — they cannot write to themes
       if (!expiresAt) {
+        // Token Exchange returned non-expiring — but if we have ANY DB token
+        // (even non-expiring from old OAuth), use it as a last resort so the
+        // app at least loads. Theme writes will still fail but sections list works.
+        if (session && session.accessToken) {
+          console.warn(
+            "[auth] Token Exchange non-expiring, falling back to DB token:",
+            session.accessToken.slice(0, 10),
+          );
+          req.shop = shop;
+          req.token = session.accessToken;
+          return next();
+        }
         return res.status(401).json({
-          error: "App not enrolled in expiring offline tokens. Run: npx shopify app config link && npx shopify app deploy",
+          error:
+            "App not enrolled in expiring offline tokens. Please reinstall the app.",
           authUrl: HOST + "/auth?shop=" + shop,
         });
       }
 
-      // Cache in DB
-      prisma.session
+      // Good expiring token from Token Exchange — cache it
+      await prisma.session
         .upsert({
           where: { shop },
           update: { accessToken: offlineToken, refreshToken: null, expiresAt },
-          create: { shop, accessToken: offlineToken, refreshToken: null, expiresAt },
+          create: {
+            shop,
+            accessToken: offlineToken,
+            refreshToken: null,
+            expiresAt,
+          },
         })
-        .catch((e) => console.warn("[auth] DB cache update failed:", e.message));
+        .catch((e) =>
+          console.warn("[auth] DB cache update failed:", e.message),
+        );
 
       req.shop = shop;
       req.token = offlineToken;
@@ -215,6 +261,15 @@ async function requireSession(req, res, next) {
         err.message,
         JSON.stringify(err.response && err.response.data),
       );
+      // If token exchange fails but we have a DB token, use it
+      if (session && session.accessToken) {
+        console.warn(
+          "[auth] token exchange failed, using DB token as fallback",
+        );
+        req.shop = shop;
+        req.token = session.accessToken;
+        return next();
+      }
       return res.status(401).json({
         error: "Token Exchange failed. Please reinstall the app.",
         authUrl: HOST + "/auth?shop=" + shop,
@@ -223,8 +278,7 @@ async function requireSession(req, res, next) {
     }
   }
 
-  // Non-embedded path: use DB token only if it's a valid expiring token
-  const session = await prisma.session.findUnique({ where: { shop } });
+  // ── Step 3: No session token header, no valid DB token ────────────────────
   if (!session) {
     return res.status(401).json({
       error: "App not installed.",
@@ -232,7 +286,6 @@ async function requireSession(req, res, next) {
     });
   }
 
-  // Reject non-expiring tokens — they will be blocked by Shopify
   if (!session.expiresAt) {
     return res.status(401).json({
       error: "Non-expiring token detected. Please reinstall the app.",
@@ -240,17 +293,10 @@ async function requireSession(req, res, next) {
     });
   }
 
-  // Reject expired tokens
-  if (session.expiresAt <= new Date()) {
-    return res.status(401).json({
-      error: "Session expired. Please reinstall the app.",
-      authUrl: HOST + "/auth?shop=" + shop,
-    });
-  }
-
-  req.shop = shop;
-  req.token = session.accessToken;
-  return next();
+  return res.status(401).json({
+    error: "Session expired. Please reinstall the app.",
+    authUrl: HOST + "/auth?shop=" + shop,
+  });
 }
 
 // ── Store info ────────────────────────────────────────────────────────────────
@@ -339,7 +385,8 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     if (!targetTheme) {
       return res.status(422).json({
-        error: "Your active theme is from the Shopify Theme Store and cannot be modified by apps via the API.",
+        error:
+          "Your active theme is from the Shopify Theme Store and cannot be modified by apps via the API.",
         fix: "Download your theme as a zip (Themes → ··· → Download), then re-upload it (Themes → Add theme → Upload zip). The re-uploaded copy will be writable.",
         themes: themes.map((t) => ({
           id: t.id,
@@ -437,7 +484,11 @@ app.post("/inject-section", requireSession, async (req, res) => {
       success: true,
       message: isActive
         ? '"' + section.name + '" added to your theme successfully!'
-        : '"' + section.name + '" added to "' + targetTheme.name + '". To use it, publish this theme.',
+        : '"' +
+          section.name +
+          '" added to "' +
+          targetTheme.name +
+          '". To use it, publish this theme.',
       targetTheme: { id: targetTheme.id, name: targetTheme.name },
       installedToActiveTheme: isActive,
     });
