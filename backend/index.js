@@ -139,10 +139,11 @@ app.get("/auth/callback", async (req, res) => {
   }
 });
 
-// ── Token Exchange: App Bridge JWT → online access token (always expiring) ────
-// Online tokens always have expires_in (~24h). No Partner Dashboard enrollment
-// needed unlike offline expiring tokens.
-async function exchangeForOnlineToken(shop, sessionToken) {
+// ── Token Exchange: App Bridge JWT → expiring offline access token ────────────
+// Requires the app to be enrolled in expiring offline tokens via Partner Dashboard
+// (run: npx shopify app config link && npx shopify app deploy).
+// Offline tokens survive user logout and can write to theme assets.
+async function exchangeForOfflineToken(shop, sessionToken) {
   const { data } = await axios.post(
     "https://" + shop + "/admin/oauth/access_token",
     {
@@ -152,7 +153,7 @@ async function exchangeForOnlineToken(shop, sessionToken) {
       subject_token: sessionToken,
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
       requested_token_type:
-        "urn:shopify:params:oauth:token-type:online-access-token",
+        "urn:shopify:params:oauth:token-type:offline-access-token",
     },
   );
   return data;
@@ -167,38 +168,46 @@ async function requireSession(req, res, next) {
 
   if (sessionToken) {
     try {
-      // Token Exchange: App Bridge JWT → online access token (always expiring)
-      const exchangeData = await exchangeForOnlineToken(shop, sessionToken);
-      const onlineToken = exchangeData.access_token;
+      // Token Exchange: App Bridge JWT → expiring offline token
+      const exchangeData = await exchangeForOfflineToken(shop, sessionToken);
+      const offlineToken = exchangeData.access_token;
       const expiresAt = exchangeData.expires_in
         ? new Date(Date.now() + exchangeData.expires_in * 1000)
         : null;
 
       console.log(
-        "[auth] online token prefix:",
-        onlineToken && onlineToken.slice(0, 10),
+        "[auth] offline token prefix:",
+        offlineToken && offlineToken.slice(0, 10),
         "| expires_in:",
-        exchangeData.expires_in,
+        exchangeData.expires_in || "NON-EXPIRING — run: npx shopify app config link && npx shopify app deploy",
       );
 
-      if (!onlineToken) {
+      if (!offlineToken) {
         return res.status(401).json({
           error: "Token Exchange returned no token.",
           authUrl: HOST + "/auth?shop=" + shop,
         });
       }
 
-      // Cache in DB so non-embedded debug endpoints still work
+      // Reject non-expiring tokens — they cannot write to themes
+      if (!expiresAt) {
+        return res.status(401).json({
+          error: "App not enrolled in expiring offline tokens. Run: npx shopify app config link && npx shopify app deploy",
+          authUrl: HOST + "/auth?shop=" + shop,
+        });
+      }
+
+      // Cache in DB
       prisma.session
         .upsert({
           where: { shop },
-          update: { accessToken: onlineToken, refreshToken: null, expiresAt },
-          create: { shop, accessToken: onlineToken, refreshToken: null, expiresAt },
+          update: { accessToken: offlineToken, refreshToken: null, expiresAt },
+          create: { shop, accessToken: offlineToken, refreshToken: null, expiresAt },
         })
         .catch((e) => console.warn("[auth] DB cache update failed:", e.message));
 
       req.shop = shop;
-      req.token = onlineToken;
+      req.token = offlineToken;
       return next();
     } catch (err) {
       console.error(
