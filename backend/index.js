@@ -18,7 +18,7 @@ const API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SCOPES = process.env.SCOPES || "write_themes,read_themes";
 const HOST = process.env.HOST || "http://localhost:3000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-const API_VER = "2024-10";
+const API_VER = "2025-01";
 
 app.use(cors());
 app.use(express.json());
@@ -237,7 +237,7 @@ async function requireSession(req, res, next) {
 
   if (sessionToken) {
     try {
-      // Token Exchange: session token → offline token
+      // Token Exchange: App Bridge JWT → expiring offline token
       const exchangeData = await exchangeForOfflineToken(shop, sessionToken);
       let offlineToken = exchangeData.access_token;
       let expiresAt = exchangeData.expires_in
@@ -252,25 +252,29 @@ async function requireSession(req, res, next) {
         !!expiresAt,
       );
 
-      // If Token Exchange returned a non-expiring token, run migration exchange
+      // If Token Exchange returned a non-expiring token, try migration
       if (!expiresAt) {
-        console.log(
-          "[auth] non-expiring token from exchange — trying offline migration",
-        );
+        console.log("[auth] non-expiring token from exchange — trying migration");
         try {
           const migData = await migrateOfflineToken(shop, offlineToken);
           if (migData.expires_in) {
             offlineToken = migData.access_token;
             expiresAt = new Date(Date.now() + migData.expires_in * 1000);
             refreshToken = migData.refresh_token || null;
-            console.log(
-              "[auth] migration succeeded, new prefix:",
-              offlineToken && offlineToken.slice(0, 10),
-            );
+            console.log("[auth] migration succeeded:", offlineToken && offlineToken.slice(0, 10));
           }
         } catch (migErr) {
           console.warn("[auth] migration failed:", migErr.message);
         }
+      }
+
+      // If still non-expiring after all attempts — refuse to use it
+      if (!expiresAt) {
+        console.error("[auth] could not obtain expiring token for:", shop);
+        return res.status(401).json({
+          error: "Could not obtain an expiring token. Please reinstall the app.",
+          authUrl: HOST + "/auth?shop=" + shop,
+        });
       }
 
       // Update DB cache (non-fatal)
@@ -280,9 +284,7 @@ async function requireSession(req, res, next) {
           update: { accessToken: offlineToken, refreshToken, expiresAt },
           create: { shop, accessToken: offlineToken, refreshToken, expiresAt },
         })
-        .catch((e) =>
-          console.warn("[auth] DB cache update failed:", e.message),
-        );
+        .catch((e) => console.warn("[auth] DB cache update failed:", e.message));
 
       req.shop = shop;
       req.token = offlineToken;
@@ -293,25 +295,15 @@ async function requireSession(req, res, next) {
         err.message,
         JSON.stringify(err.response && err.response.data),
       );
-
-      // Fallback to DB token
-      const session = await prisma.session.findUnique({ where: { shop } });
-      if (session && session.accessToken) {
-        console.warn("[auth] using DB fallback token for:", shop);
-        req.shop = shop;
-        req.token = session.accessToken;
-        return next();
-      }
-
       return res.status(401).json({
-        error: "Authentication failed. Please reinstall the app.",
+        error: "Token Exchange failed. Please reinstall the app.",
         authUrl: HOST + "/auth?shop=" + shop,
         details: err.message,
       });
     }
   }
 
-  // Non-embedded / debug: use DB token
+  // Non-embedded path: use DB token only if it's a valid expiring token
   const session = await prisma.session.findUnique({ where: { shop } });
   if (!session) {
     return res.status(401).json({
@@ -319,6 +311,23 @@ async function requireSession(req, res, next) {
       authUrl: HOST + "/auth?shop=" + shop,
     });
   }
+
+  // Reject non-expiring tokens — they will be blocked by Shopify
+  if (!session.expiresAt) {
+    return res.status(401).json({
+      error: "Non-expiring token detected. Please reinstall the app.",
+      authUrl: HOST + "/auth?shop=" + shop,
+    });
+  }
+
+  // Reject expired tokens
+  if (session.expiresAt <= new Date()) {
+    return res.status(401).json({
+      error: "Session expired. Please reinstall the app.",
+      authUrl: HOST + "/auth?shop=" + shop,
+    });
+  }
+
   req.shop = shop;
   req.token = session.accessToken;
   return next();
