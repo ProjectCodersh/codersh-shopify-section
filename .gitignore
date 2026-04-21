@@ -62,5 +62,7 @@ desktop.ini
 .temp/
 .tmp/
 
+*.md 
 
-*.md
+# ─── Claude / Agent Skills ───────────────────────────────────────────────────
+skills-lock.json
