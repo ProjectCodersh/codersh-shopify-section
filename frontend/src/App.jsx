@@ -354,8 +354,8 @@ export default function App() {
       setMessage({
         type: "success",
         text: isActive
-          ? `"${section.name}" added! Go to Theme Editor → Add section to place it on your page.`
-          : `"${section.name}" added to "${res.data.targetTheme?.name}". This is not your active theme — publish it first, or open its editor to preview.`,
+          ? `"${section.name}" uploaded! In the Theme Editor: click + Add section → search "${section.name}" → click to place it on your page.`
+          : `"${section.name}" uploaded to "${res.data.targetTheme?.name}" (not your active theme). Publish that theme first, then use + Add section in the Theme Editor.`,
         link: editorUrl,
         linkText: "Open Theme Editor →",
       });
