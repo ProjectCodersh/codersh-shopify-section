@@ -145,11 +145,12 @@ app.get("/auth/callback", async (req, res) => {
   }
 });
 
-// ── Token Exchange: App Bridge JWT → expiring offline access token ────────────
-// Requires the app to be enrolled in expiring offline tokens via Partner Dashboard
-// (run: npx shopify app config link && npx shopify app deploy).
-// Offline tokens survive user logout and can write to theme assets.
-async function exchangeForOfflineToken(shop, sessionToken) {
+// ── Token Exchange: App Bridge JWT → online access token ─────────────────────
+// Online tokens are always expiring and work for all Admin API calls including
+// write_themes. No Partner Dashboard enrollment needed. App Bridge sends a
+// fresh session token with every embedded request, so we can always re-exchange
+// when the online token expires.
+async function exchangeToken(shop, sessionToken) {
   const { data } = await axios.post(
     "https://" + shop + "/admin/oauth/access_token",
     {
@@ -159,7 +160,7 @@ async function exchangeForOfflineToken(shop, sessionToken) {
       subject_token: sessionToken,
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
       requested_token_type:
-        "urn:shopify:params:oauth:token-type:offline-access-token",
+        "urn:shopify:params:oauth:token-type:online-access-token",
     },
   );
   return data;
@@ -170,22 +171,23 @@ async function requireSession(req, res, next) {
   const shop = req.query.shop || (req.body && req.body.shop);
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
 
-  // ── Step 1: Check DB for any saved token ─────────────────────────────────
-  // Use the DB token if it exists and hasn't expired. Non-expiring tokens
-  // (expiresAt: null) are also accepted — they work fine for Shopify API calls.
+  // ── Step 1: Use cached token if still valid ───────────────────────────────
+  // Online tokens are always expiring. Use the DB copy to avoid a Token
+  // Exchange round-trip on every request within the same session window.
   const session = await prisma.session.findUnique({ where: { shop } });
   const now = new Date();
   const dbTokenValid =
     session &&
     session.accessToken &&
-    (!session.expiresAt || session.expiresAt > now);
+    session.expiresAt &&
+    session.expiresAt > now;
 
   if (dbTokenValid) {
     console.log(
-      "[auth] using DB token prefix:",
+      "[auth] using cached token prefix:",
       session.accessToken && session.accessToken.slice(0, 10),
       "| expiresAt:",
-      session.expiresAt || "NON-EXPIRING",
+      session.expiresAt,
     );
     req.shop = shop;
     req.token = session.accessToken;
@@ -197,45 +199,42 @@ async function requireSession(req, res, next) {
 
   if (sessionToken) {
     try {
-      const exchangeData = await exchangeForOfflineToken(shop, sessionToken);
-      const offlineToken = exchangeData.access_token;
+      const exchangeData = await exchangeToken(shop, sessionToken);
+      const accessToken = exchangeData.access_token;
+      // Online tokens always include expires_in; store it so Step 1 reuses
+      // the cached token on subsequent requests within the same session.
       const expiresAt = exchangeData.expires_in
         ? new Date(Date.now() + exchangeData.expires_in * 1000)
         : null;
 
       console.log(
         "[auth] token exchange prefix:",
-        offlineToken && offlineToken.slice(0, 10),
+        accessToken && accessToken.slice(0, 10),
         "| expires_in:",
         exchangeData.expires_in || "NON-EXPIRING",
+        "| associated_user:",
+        exchangeData.associated_user && exchangeData.associated_user.email,
       );
 
-      if (!offlineToken) {
+      if (!accessToken) {
         return res.status(401).json({
           error: "Token Exchange returned no token.",
           authUrl: HOST + "/auth?shop=" + shop,
         });
       }
 
-      // Save the token regardless of whether it expires or not.
-      // Non-expiring tokens (expiresAt: null) work fine for Shopify API calls.
       await prisma.session
         .upsert({
           where: { shop },
-          update: { accessToken: offlineToken, refreshToken: null, expiresAt },
-          create: {
-            shop,
-            accessToken: offlineToken,
-            refreshToken: null,
-            expiresAt,
-          },
+          update: { accessToken, refreshToken: null, expiresAt },
+          create: { shop, accessToken, refreshToken: null, expiresAt },
         })
         .catch((e) =>
           console.warn("[auth] DB cache update failed:", e.message),
         );
 
       req.shop = shop;
-      req.token = offlineToken;
+      req.token = accessToken;
       return next();
     } catch (err) {
       console.error(
@@ -243,15 +242,6 @@ async function requireSession(req, res, next) {
         err.message,
         JSON.stringify(err.response && err.response.data),
       );
-      // If token exchange fails but we have a DB token, use it
-      if (session && session.accessToken) {
-        console.warn(
-          "[auth] token exchange failed, using DB token as fallback",
-        );
-        req.shop = shop;
-        req.token = session.accessToken;
-        return next();
-      }
       return res.status(401).json({
         error: "Token Exchange failed. Please reinstall the app.",
         authUrl: HOST + "/auth?shop=" + shop,
@@ -260,16 +250,12 @@ async function requireSession(req, res, next) {
     }
   }
 
-  // ── Step 3: No session token header, no valid DB token ────────────────────
-  if (!session || !session.accessToken) {
-    return res.status(401).json({
-      error: "App not installed. Please install the app.",
-      authUrl: HOST + "/auth?shop=" + shop,
-    });
-  }
-
+  // ── Step 3: No session token header and no cached token ──────────────────
+  // This should not happen in a properly embedded app — App Bridge always
+  // sends x-shopify-session-token. Reaching here means the request came from
+  // outside the Shopify admin (e.g. direct API call without the header).
   return res.status(401).json({
-    error: "Session expired. Please reinstall the app.",
+    error: "Missing session token. Open this app from the Shopify admin.",
     authUrl: HOST + "/auth?shop=" + shop,
   });
 }
