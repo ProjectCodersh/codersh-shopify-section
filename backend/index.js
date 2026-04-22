@@ -170,21 +170,22 @@ async function requireSession(req, res, next) {
   const shop = req.query.shop || (req.body && req.body.shop);
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
 
-  // ── Step 1: Check DB for a valid, non-expired, expiring token ─────────────
-  // Prefer the DB token. Token Exchange is only used as a fallback when the
-  // DB token is missing or expired. This avoids the issue where Shopify's
-  // Token Exchange endpoint returns non-expiring tokens for apps not yet
-  // fully enrolled in the expiring-offline-tokens programme.
+  // ── Step 1: Check DB for any saved token ─────────────────────────────────
+  // Use the DB token if it exists and hasn't expired. Non-expiring tokens
+  // (expiresAt: null) are also accepted — they work fine for Shopify API calls.
   const session = await prisma.session.findUnique({ where: { shop } });
   const now = new Date();
-  const dbTokenValid = session && session.expiresAt && session.expiresAt > now;
+  const dbTokenValid =
+    session &&
+    session.accessToken &&
+    (!session.expiresAt || session.expiresAt > now);
 
   if (dbTokenValid) {
     console.log(
       "[auth] using DB token prefix:",
       session.accessToken && session.accessToken.slice(0, 10),
       "| expiresAt:",
-      session.expiresAt,
+      session.expiresAt || "NON-EXPIRING",
     );
     req.shop = shop;
     req.token = session.accessToken;
@@ -216,27 +217,8 @@ async function requireSession(req, res, next) {
         });
       }
 
-      if (!expiresAt) {
-        // Token Exchange returned non-expiring — but if we have ANY DB token
-        // (even non-expiring from old OAuth), use it as a last resort so the
-        // app at least loads. Theme writes will still fail but sections list works.
-        if (session && session.accessToken) {
-          console.warn(
-            "[auth] Token Exchange non-expiring, falling back to DB token:",
-            session.accessToken.slice(0, 10),
-          );
-          req.shop = shop;
-          req.token = session.accessToken;
-          return next();
-        }
-        return res.status(401).json({
-          error:
-            "App not enrolled in expiring offline tokens. Please reinstall the app.",
-          authUrl: HOST + "/auth?shop=" + shop,
-        });
-      }
-
-      // Good expiring token from Token Exchange — cache it
+      // Save the token regardless of whether it expires or not.
+      // Non-expiring tokens (expiresAt: null) work fine for Shopify API calls.
       await prisma.session
         .upsert({
           where: { shop },
@@ -279,16 +261,9 @@ async function requireSession(req, res, next) {
   }
 
   // ── Step 3: No session token header, no valid DB token ────────────────────
-  if (!session) {
+  if (!session || !session.accessToken) {
     return res.status(401).json({
-      error: "App not installed.",
-      authUrl: HOST + "/auth?shop=" + shop,
-    });
-  }
-
-  if (!session.expiresAt) {
-    return res.status(401).json({
-      error: "Non-expiring token detected. Please reinstall the app.",
+      error: "App not installed. Please install the app.",
       authUrl: HOST + "/auth?shop=" + shop,
     });
   }
