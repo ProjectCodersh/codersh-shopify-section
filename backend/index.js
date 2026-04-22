@@ -622,6 +622,31 @@ app.get("/test-token", async (req, res) => {
   }
 });
 
+app.get("/check-scopes", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).json({ error: "Missing shop" });
+  const session = await prisma.session.findUnique({ where: { shop } });
+  if (!session) return res.status(401).json({ error: "No session." });
+  try {
+    const response = await axios.get(
+      "https://" + shop + "/admin/api/" + API_VER + "/oauth/authorized_access_scopes.json",
+      { headers: { "X-Shopify-Access-Token": session.accessToken } },
+    );
+    const scopes = (response.data.access_scopes || []).map((s) => s.handle);
+    res.json({
+      tokenPrefix: session.accessToken && session.accessToken.slice(0, 10),
+      grantedScopes: scopes,
+      hasReadThemes: scopes.includes("read_themes"),
+      hasWriteThemes: scopes.includes("write_themes"),
+      verdict: scopes.includes("write_themes")
+        ? "OK — token has write_themes"
+        : "PROBLEM — write_themes scope is missing. App needs to be reinstalled.",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message, shopifyError: err.response && err.response.data });
+  }
+});
+
 app.get("/debug-theme", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ error: "Missing shop" });
