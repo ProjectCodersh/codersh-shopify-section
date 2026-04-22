@@ -406,18 +406,34 @@ app.post("/inject-section", requireSession, async (req, res) => {
           { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
         );
 
-        const userErrors = gqlRes.data.data &&
-          gqlRes.data.data.themeFilesUpsert &&
-          gqlRes.data.data.themeFilesUpsert.userErrors;
+        // Log the raw response so we can see exactly what Shopify returned
+        console.log("[inject] GraphQL raw response:", JSON.stringify(gqlRes.data));
+
+        // Top-level GraphQL errors (wrong mutation name, access denied, etc.)
+        if (gqlRes.data.errors && gqlRes.data.errors.length > 0) {
+          console.warn("[inject] GraphQL top-level errors:", JSON.stringify(gqlRes.data.errors));
+          lastErr = new Error(gqlRes.data.errors.map((e) => e.message).join(", "));
+          continue;
+        }
+
+        const result = gqlRes.data.data && gqlRes.data.data.themeFilesUpsert;
+        const userErrors = result && result.userErrors;
+        const upsertedFiles = result && result.upsertedThemeFiles;
 
         if (userErrors && userErrors.length > 0) {
-          console.warn("[inject] GraphQL userErrors for", candidate.name, JSON.stringify(userErrors));
+          console.warn("[inject] GraphQL userErrors:", JSON.stringify(userErrors));
           lastErr = new Error(userErrors.map((e) => e.message).join(", "));
           continue;
         }
 
+        if (!upsertedFiles || upsertedFiles.length === 0) {
+          console.warn("[inject] GraphQL returned no upsertedThemeFiles — treating as failure");
+          lastErr = new Error("GraphQL mutation returned no upserted files");
+          continue;
+        }
+
         targetTheme = candidate;
-        console.log("[inject] liquid uploaded via GraphQL to:", candidate.name, "→", sectionKey);
+        console.log("[inject] liquid uploaded via GraphQL to:", candidate.name, "→", upsertedFiles.map((f) => f.filename).join(", "));
         break;
       } catch (err) {
         console.warn(
@@ -433,7 +449,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
       console.error("[inject] all theme write attempts failed");
       return res.status(500).json({
         error: "Failed to write section file: " + (lastErr && lastErr.message),
-        triedThemes: writableCandidates.map((t) => ({ id: t.id, name: t.name })),
+        triedThemes: candidates.map((t) => ({ id: t.id, name: t.name })),
       });
     }
 
