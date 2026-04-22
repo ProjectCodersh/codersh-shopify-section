@@ -400,93 +400,87 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     const sectionKey = "sections/" + section.id + ".liquid";
     let targetTheme = null;
-    let lastPutErr = null;
+    let lastErr = null;
 
     for (const candidate of writableCandidates) {
-      console.log(
-        "[inject] trying theme:",
-        candidate.name,
-        "id:",
-        candidate.id,
-      );
+      console.log("[inject] trying theme:", candidate.name, "id:", candidate.id);
+      const gid = "gid://shopify/OnlineStoreTheme/" + candidate.id;
       try {
-        await axios.put(
-          "https://" +
-            shop +
-            "/admin/api/" +
-            API_VER +
-            "/themes/" +
-            candidate.id +
-            "/assets.json",
-          { asset: { key: sectionKey, value: liquidCode } },
+        const gqlRes = await axios.post(
+          "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
           {
-            headers: {
-              "X-Shopify-Access-Token": token,
-              "Content-Type": "application/json",
+            query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+              themeFilesUpsert(themeId: $themeId, files: $files) {
+                upsertedThemeFiles { filename }
+                userErrors { filename field message }
+              }
+            }`,
+            variables: {
+              themeId: gid,
+              files: [{ filename: sectionKey, body: { type: "TEXT", value: liquidCode } }],
             },
           },
+          { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
         );
+
+        const userErrors = gqlRes.data.data &&
+          gqlRes.data.data.themeFilesUpsert &&
+          gqlRes.data.data.themeFilesUpsert.userErrors;
+
+        if (userErrors && userErrors.length > 0) {
+          console.warn("[inject] GraphQL userErrors for", candidate.name, JSON.stringify(userErrors));
+          lastErr = new Error(userErrors.map((e) => e.message).join(", "));
+          continue;
+        }
+
         targetTheme = candidate;
-        console.log(
-          "[inject] liquid uploaded to:",
-          candidate.name,
-          "→",
-          sectionKey,
-        );
+        console.log("[inject] liquid uploaded via GraphQL to:", candidate.name, "→", sectionKey);
         break;
       } catch (err) {
         console.warn(
-          "[inject] PUT failed for theme:",
-          candidate.name,
-          "status:",
-          err.response && err.response.status,
+          "[inject] GraphQL failed for theme:", candidate.name,
+          "status:", err.response && err.response.status,
           JSON.stringify(err.response && err.response.data),
         );
-        lastPutErr = err;
+        lastErr = err;
       }
     }
 
     if (!targetTheme) {
-      // All candidates failed
       console.error("[inject] all theme write attempts failed");
       return res.status(500).json({
-        error:
-          "Failed to write section file: " + (lastPutErr && lastPutErr.message),
-        shopifyError:
-          lastPutErr && lastPutErr.response && lastPutErr.response.data,
-        shopifyStatus:
-          lastPutErr && lastPutErr.response && lastPutErr.response.status,
-        triedThemes: writableCandidates.map((t) => ({
-          id: t.id,
-          name: t.name,
-        })),
+        error: "Failed to write section file: " + (lastErr && lastErr.message),
+        triedThemes: writableCandidates.map((t) => ({ id: t.id, name: t.name })),
       });
     }
 
-    // Write CSS/JS assets
+    // Write CSS/JS assets via GraphQL
     const assets = getSectionAssets(section.assets || []);
-    for (const asset of assets) {
+    if (assets.length > 0) {
+      const gid = "gid://shopify/OnlineStoreTheme/" + targetTheme.id;
       await axios
-        .put(
-          "https://" +
-            shop +
-            "/admin/api/" +
-            API_VER +
-            "/themes/" +
-            targetTheme.id +
-            "/assets.json",
-          { asset: { key: asset.key, value: asset.value } },
+        .post(
+          "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
           {
-            headers: {
-              "X-Shopify-Access-Token": token,
-              "Content-Type": "application/json",
+            query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+              themeFilesUpsert(themeId: $themeId, files: $files) {
+                upsertedThemeFiles { filename }
+                userErrors { filename field message }
+              }
+            }`,
+            variables: {
+              themeId: gid,
+              files: assets.map((a) => ({ filename: a.key, body: { type: "TEXT", value: a.value } })),
             },
           },
+          { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
         )
-        .catch((e) =>
-          console.error("[inject] asset failed:", asset.key, e.message),
-        );
-      console.log("[inject] asset uploaded:", asset.key);
+        .then((r) => {
+          const errs = r.data.data && r.data.data.themeFilesUpsert && r.data.data.themeFilesUpsert.userErrors;
+          if (errs && errs.length) console.error("[inject] asset GraphQL errors:", JSON.stringify(errs));
+          else console.log("[inject] assets uploaded:", assets.map((a) => a.key).join(", "));
+        })
+        .catch((e) => console.error("[inject] assets upload failed:", e.message));
     }
 
     // Save to DB
@@ -628,11 +622,20 @@ app.get("/check-scopes", async (req, res) => {
   const session = await prisma.session.findUnique({ where: { shop } });
   if (!session) return res.status(401).json({ error: "No session." });
   try {
-    const response = await axios.get(
-      "https://" + shop + "/admin/api/" + API_VER + "/oauth/authorized_access_scopes.json",
-      { headers: { "X-Shopify-Access-Token": session.accessToken } },
+    const response = await axios.post(
+      "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
+      {
+        query: `{
+          currentAppInstallation {
+            accessScopes { handle }
+          }
+        }`,
+      },
+      { headers: { "X-Shopify-Access-Token": session.accessToken, "Content-Type": "application/json" } },
     );
-    const scopes = (response.data.access_scopes || []).map((s) => s.handle);
+    const scopes = (
+      response.data.data.currentAppInstallation.accessScopes || []
+    ).map((s) => s.handle);
     res.json({
       tokenPrefix: session.accessToken && session.accessToken.slice(0, 10),
       grantedScopes: scopes,
@@ -640,7 +643,7 @@ app.get("/check-scopes", async (req, res) => {
       hasWriteThemes: scopes.includes("write_themes"),
       verdict: scopes.includes("write_themes")
         ? "OK — token has write_themes"
-        : "PROBLEM — write_themes scope is missing. App needs to be reinstalled.",
+        : "PROBLEM — write_themes scope is missing. Uninstall and reinstall the app.",
     });
   } catch (err) {
     res.status(500).json({ error: err.message, shopifyError: err.response && err.response.data });
