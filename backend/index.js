@@ -387,59 +387,20 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     for (const candidate of candidates) {
       console.log("[inject] trying theme:", candidate.name, "id:", candidate.id);
-      const gid = "gid://shopify/OnlineStoreTheme/" + candidate.id;
       try {
-        const gqlRes = await axios.post(
-          "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
-          {
-            query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
-              themeFilesUpsert(themeId: $themeId, files: $files) {
-                upsertedThemeFiles { filename }
-                userErrors { filename field message }
-              }
-            }`,
-            variables: {
-              themeId: gid,
-              files: [{ filename: sectionKey, body: { type: "TEXT", value: liquidCode } }],
-            },
-          },
+        const putRes = await axios.put(
+          "https://" + shop + "/admin/api/" + API_VER + "/themes/" + candidate.id + "/assets.json",
+          { asset: { key: sectionKey, value: liquidCode } },
           { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
         );
-
-        // Log the raw response so we can see exactly what Shopify returned
-        console.log("[inject] GraphQL raw response:", JSON.stringify(gqlRes.data));
-
-        // Top-level GraphQL errors (wrong mutation name, access denied, etc.)
-        if (gqlRes.data.errors && gqlRes.data.errors.length > 0) {
-          console.warn("[inject] GraphQL top-level errors:", JSON.stringify(gqlRes.data.errors));
-          lastErr = new Error(gqlRes.data.errors.map((e) => e.message).join(", "));
-          continue;
-        }
-
-        const result = gqlRes.data.data && gqlRes.data.data.themeFilesUpsert;
-        const userErrors = result && result.userErrors;
-        const upsertedFiles = result && result.upsertedThemeFiles;
-
-        if (userErrors && userErrors.length > 0) {
-          console.warn("[inject] GraphQL userErrors:", JSON.stringify(userErrors));
-          lastErr = new Error(userErrors.map((e) => e.message).join(", "));
-          continue;
-        }
-
-        if (!upsertedFiles || upsertedFiles.length === 0) {
-          console.warn("[inject] GraphQL returned no upsertedThemeFiles — treating as failure");
-          lastErr = new Error("GraphQL mutation returned no upserted files");
-          continue;
-        }
-
         targetTheme = candidate;
-        console.log("[inject] liquid uploaded via GraphQL to:", candidate.name, "→", upsertedFiles.map((f) => f.filename).join(", "));
+        console.log("[inject] liquid uploaded to:", candidate.name, "→", sectionKey, "| status:", putRes.status);
         break;
       } catch (err) {
         console.warn(
-          "[inject] GraphQL failed for theme:", candidate.name,
-          "status:", err.response && err.response.status,
-          JSON.stringify(err.response && err.response.data),
+          "[inject] PUT failed for theme:", candidate.name,
+          "| status:", err.response && err.response.status,
+          "| body:", JSON.stringify(err.response && err.response.data),
         );
         lastErr = err;
       }
@@ -453,33 +414,17 @@ app.post("/inject-section", requireSession, async (req, res) => {
       });
     }
 
-    // Write CSS/JS assets via GraphQL
+    // Write CSS/JS assets via REST
     const assets = getSectionAssets(section.assets || []);
-    if (assets.length > 0) {
-      const gid = "gid://shopify/OnlineStoreTheme/" + targetTheme.id;
+    for (const asset of assets) {
       await axios
-        .post(
-          "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
-          {
-            query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
-              themeFilesUpsert(themeId: $themeId, files: $files) {
-                upsertedThemeFiles { filename }
-                userErrors { filename field message }
-              }
-            }`,
-            variables: {
-              themeId: gid,
-              files: assets.map((a) => ({ filename: a.key, body: { type: "TEXT", value: a.value } })),
-            },
-          },
+        .put(
+          "https://" + shop + "/admin/api/" + API_VER + "/themes/" + targetTheme.id + "/assets.json",
+          { asset: { key: asset.key, value: asset.value } },
           { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
         )
-        .then((r) => {
-          const errs = r.data.data && r.data.data.themeFilesUpsert && r.data.data.themeFilesUpsert.userErrors;
-          if (errs && errs.length) console.error("[inject] asset GraphQL errors:", JSON.stringify(errs));
-          else console.log("[inject] assets uploaded:", assets.map((a) => a.key).join(", "));
-        })
-        .catch((e) => console.error("[inject] assets upload failed:", e.message));
+        .then(() => console.log("[inject] asset uploaded:", asset.key))
+        .catch((e) => console.error("[inject] asset failed:", asset.key, e.response && e.response.status, JSON.stringify(e.response && e.response.data)));
     }
 
     // Save to DB
