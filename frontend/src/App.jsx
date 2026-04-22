@@ -344,15 +344,19 @@ export default function App() {
     setInstalling(section.id);
     setMessage(null);
     try {
-      await axios.post(`${BACKEND_URL}/inject-section`, {
+      const res = await axios.post(`${BACKEND_URL}/inject-section`, {
         sectionId: section.id,
         shop: SHOP,
       });
       setInstalled((prev) => [...prev, section.id]);
+      const editorUrl = res.data.themeEditorUrl || themeEditorUrl;
+      const isActive = res.data.installedToActiveTheme;
       setMessage({
         type: "success",
-        text: `"${section.name}" added! Go to Theme Editor → Add section to place it on your page.`,
-        link: themeEditorUrl,
+        text: isActive
+          ? `"${section.name}" added! Go to Theme Editor → Add section to place it on your page.`
+          : `"${section.name}" added to "${res.data.targetTheme?.name}". This is not your active theme — publish it first, or open its editor to preview.`,
+        link: editorUrl,
         linkText: "Open Theme Editor →",
       });
     } catch (err) {

@@ -374,35 +374,18 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(404).json({ error: "No published theme found." });
     }
 
-    // Shopify blocks ALL API writes to Theme Store themes (theme_store_id set).
-    // Build a priority-ordered list of writable candidate themes:
-    //   1. Active theme if not from Theme Store
-    //   2. All other non-Theme-Store themes (unpublished custom/uploaded themes)
-    // We try each in order and use the first one that accepts a write.
-    const writableCandidates = [
-      ...(!activeTheme.theme_store_id ? [activeTheme] : []),
-      ...themes.filter((t) => !t.theme_store_id && t.id !== activeTheme.id),
+    // Try the active theme first — GraphQL themeFilesUpsert may succeed even
+    // for Theme Store themes. If it fails, fall through to any other theme.
+    const candidates = [
+      activeTheme,
+      ...themes.filter((t) => t.id !== activeTheme.id),
     ];
-
-    if (writableCandidates.length === 0) {
-      return res.status(422).json({
-        error:
-          "Your active theme is from the Shopify Theme Store and cannot be modified by apps via the API.",
-        fix: "Upload a custom theme: Themes → Add theme → Upload zip file.",
-        themes: themes.map((t) => ({
-          id: t.id,
-          name: t.name,
-          role: t.role,
-          writable: !t.theme_store_id,
-        })),
-      });
-    }
 
     const sectionKey = "sections/" + section.id + ".liquid";
     let targetTheme = null;
     let lastErr = null;
 
-    for (const candidate of writableCandidates) {
+    for (const candidate of candidates) {
       console.log("[inject] trying theme:", candidate.name, "id:", candidate.id);
       const gid = "gid://shopify/OnlineStoreTheme/" + candidate.id;
       try {
@@ -491,17 +474,16 @@ app.post("/inject-section", requireSession, async (req, res) => {
     });
 
     const isActive = targetTheme.id === activeTheme.id;
+    const themeEditorUrl =
+      "https://" + shop + "/admin/themes/" + targetTheme.id + "/editor";
     res.json({
       success: true,
       message: isActive
-        ? '"' + section.name + '" added to your theme successfully!'
-        : '"' +
-          section.name +
-          '" added to "' +
-          targetTheme.name +
-          '". To use it, publish this theme.',
+        ? '"' + section.name + '" added to your active theme!'
+        : '"' + section.name + '" added to "' + targetTheme.name + '" (not your active theme). Publish it to see it live.',
       targetTheme: { id: targetTheme.id, name: targetTheme.name },
       installedToActiveTheme: isActive,
+      themeEditorUrl,
     });
   } catch (error) {
     console.error("[inject] unexpected error:", error.message);
