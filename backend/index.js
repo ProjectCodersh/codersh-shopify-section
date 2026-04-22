@@ -145,11 +145,11 @@ app.get("/auth/callback", async (req, res) => {
   }
 });
 
-// ── Token Exchange: App Bridge JWT → online access token ─────────────────────
-// Online tokens are always expiring and work for all Admin API calls including
-// write_themes. No Partner Dashboard enrollment needed. App Bridge sends a
-// fresh session token with every embedded request, so we can always re-exchange
-// when the online token expires.
+// ── Token Exchange: App Bridge JWT → expiring offline access token ────────────
+// Offline tokens are store-level (not tied to a user session) and survive
+// browser close — ideal for theme writes. The `expiring: 1` parameter is what
+// makes Shopify return an expiring token + refresh token instead of a legacy
+// non-expiring token. No Partner Dashboard enrollment needed.
 async function exchangeToken(shop, sessionToken) {
   const { data } = await axios.post(
     "https://" + shop + "/admin/oauth/access_token",
@@ -160,7 +160,22 @@ async function exchangeToken(shop, sessionToken) {
       subject_token: sessionToken,
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
       requested_token_type:
-        "urn:shopify:params:oauth:token-type:online-access-token",
+        "urn:shopify:params:oauth:token-type:offline-access-token",
+      expiring: 1,
+    },
+  );
+  return data;
+}
+
+// ── Refresh an expiring offline token using its refresh token ─────────────────
+async function refreshOfflineToken(shop, refreshToken) {
+  const { data } = await axios.post(
+    "https://" + shop + "/admin/oauth/access_token",
+    {
+      client_id: API_KEY,
+      client_secret: API_SECRET,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
     },
   );
   return data;
@@ -171,21 +186,14 @@ async function requireSession(req, res, next) {
   const shop = req.query.shop || (req.body && req.body.shop);
   if (!shop) return res.status(400).json({ error: "Missing shop parameter" });
 
-  // ── Step 1: Use cached token if still valid ───────────────────────────────
-  // Online tokens are always expiring. Use the DB copy to avoid a Token
-  // Exchange round-trip on every request within the same session window.
   const session = await prisma.session.findUnique({ where: { shop } });
   const now = new Date();
-  const dbTokenValid =
-    session &&
-    session.accessToken &&
-    session.expiresAt &&
-    session.expiresAt > now;
 
-  if (dbTokenValid) {
+  // ── Step 1: Use cached access token if still valid ────────────────────────
+  if (session && session.accessToken && session.expiresAt && session.expiresAt > now) {
     console.log(
       "[auth] using cached token prefix:",
-      session.accessToken && session.accessToken.slice(0, 10),
+      session.accessToken.slice(0, 10),
       "| expiresAt:",
       session.expiresAt,
     );
@@ -194,15 +202,47 @@ async function requireSession(req, res, next) {
     return next();
   }
 
-  // ── Step 2: No valid DB token — try Token Exchange with App Bridge JWT ─────
+  // ── Step 2: Access token expired — try refresh token ─────────────────────
+  if (session && session.refreshToken) {
+    try {
+      const refreshData = await refreshOfflineToken(shop, session.refreshToken);
+      const accessToken = refreshData.access_token;
+      const refreshToken = refreshData.refresh_token || session.refreshToken;
+      const expiresAt = refreshData.expires_in
+        ? new Date(Date.now() + refreshData.expires_in * 1000)
+        : null;
+
+      console.log(
+        "[auth] refreshed token prefix:",
+        accessToken && accessToken.slice(0, 10),
+        "| new expiresAt:",
+        expiresAt,
+      );
+
+      await prisma.session.update({
+        where: { shop },
+        data: { accessToken, refreshToken, expiresAt },
+      });
+
+      req.shop = shop;
+      req.token = accessToken;
+      return next();
+    } catch (err) {
+      console.warn(
+        "[auth] refresh token failed, falling through to Token Exchange:",
+        err.message,
+      );
+    }
+  }
+
+  // ── Step 3: No valid token — Token Exchange with App Bridge session JWT ───
   const sessionToken = req.headers["x-shopify-session-token"];
 
   if (sessionToken) {
     try {
       const exchangeData = await exchangeToken(shop, sessionToken);
       const accessToken = exchangeData.access_token;
-      // Online tokens always include expires_in; store it so Step 1 reuses
-      // the cached token on subsequent requests within the same session.
+      const refreshToken = exchangeData.refresh_token || null;
       const expiresAt = exchangeData.expires_in
         ? new Date(Date.now() + exchangeData.expires_in * 1000)
         : null;
@@ -212,8 +252,8 @@ async function requireSession(req, res, next) {
         accessToken && accessToken.slice(0, 10),
         "| expires_in:",
         exchangeData.expires_in || "NON-EXPIRING",
-        "| associated_user:",
-        exchangeData.associated_user && exchangeData.associated_user.email,
+        "| has_refresh_token:",
+        !!refreshToken,
       );
 
       if (!accessToken) {
@@ -226,11 +266,11 @@ async function requireSession(req, res, next) {
       await prisma.session
         .upsert({
           where: { shop },
-          update: { accessToken, refreshToken: null, expiresAt },
-          create: { shop, accessToken, refreshToken: null, expiresAt },
+          update: { accessToken, refreshToken, expiresAt },
+          create: { shop, accessToken, refreshToken, expiresAt },
         })
         .catch((e) =>
-          console.warn("[auth] DB cache update failed:", e.message),
+          console.warn("[auth] DB upsert failed:", e.message),
         );
 
       req.shop = shop;
@@ -250,10 +290,7 @@ async function requireSession(req, res, next) {
     }
   }
 
-  // ── Step 3: No session token header and no cached token ──────────────────
-  // This should not happen in a properly embedded app — App Bridge always
-  // sends x-shopify-session-token. Reaching here means the request came from
-  // outside the Shopify admin (e.g. direct API call without the header).
+  // ── Step 4: No session token header — request came from outside the admin ─
   return res.status(401).json({
     error: "Missing session token. Open this app from the Shopify admin.",
     authUrl: HOST + "/auth?shop=" + shop,
