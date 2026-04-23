@@ -190,7 +190,12 @@ async function requireSession(req, res, next) {
   const now = new Date();
 
   // ── Step 1: Use cached access token if still valid ────────────────────────
-  if (session && session.accessToken && session.expiresAt && session.expiresAt > now) {
+  if (
+    session &&
+    session.accessToken &&
+    session.expiresAt &&
+    session.expiresAt > now
+  ) {
     console.log(
       "[auth] using cached token prefix:",
       session.accessToken.slice(0, 10),
@@ -269,9 +274,7 @@ async function requireSession(req, res, next) {
           update: { accessToken, refreshToken, expiresAt },
           create: { shop, accessToken, refreshToken, expiresAt },
         })
-        .catch((e) =>
-          console.warn("[auth] DB upsert failed:", e.message),
-        );
+        .catch((e) => console.warn("[auth] DB upsert failed:", e.message));
 
       req.shop = shop;
       req.token = accessToken;
@@ -386,21 +389,47 @@ app.post("/inject-section", requireSession, async (req, res) => {
     let lastErr = null;
 
     for (const candidate of candidates) {
-      console.log("[inject] trying theme:", candidate.name, "id:", candidate.id);
+      console.log(
+        "[inject] trying theme:",
+        candidate.name,
+        "id:",
+        candidate.id,
+      );
       try {
         const putRes = await axios.put(
-          "https://" + shop + "/admin/api/" + API_VER + "/themes/" + candidate.id + "/assets.json",
+          "https://" +
+            shop +
+            "/admin/api/" +
+            API_VER +
+            "/themes/" +
+            candidate.id +
+            "/assets.json",
           { asset: { key: sectionKey, value: liquidCode } },
-          { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
+          {
+            headers: {
+              "X-Shopify-Access-Token": token,
+              "Content-Type": "application/json",
+            },
+          },
         );
         targetTheme = candidate;
-        console.log("[inject] liquid uploaded to:", candidate.name, "→", sectionKey, "| status:", putRes.status);
+        console.log(
+          "[inject] liquid uploaded to:",
+          candidate.name,
+          "→",
+          sectionKey,
+          "| status:",
+          putRes.status,
+        );
         break;
       } catch (err) {
         console.warn(
-          "[inject] PUT failed for theme:", candidate.name,
-          "| status:", err.response && err.response.status,
-          "| body:", JSON.stringify(err.response && err.response.data),
+          "[inject] PUT failed for theme:",
+          candidate.name,
+          "| status:",
+          err.response && err.response.status,
+          "| body:",
+          JSON.stringify(err.response && err.response.data),
         );
         lastErr = err;
       }
@@ -419,12 +448,30 @@ app.post("/inject-section", requireSession, async (req, res) => {
     for (const asset of assets) {
       await axios
         .put(
-          "https://" + shop + "/admin/api/" + API_VER + "/themes/" + targetTheme.id + "/assets.json",
+          "https://" +
+            shop +
+            "/admin/api/" +
+            API_VER +
+            "/themes/" +
+            targetTheme.id +
+            "/assets.json",
           { asset: { key: asset.key, value: asset.value } },
-          { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
+          {
+            headers: {
+              "X-Shopify-Access-Token": token,
+              "Content-Type": "application/json",
+            },
+          },
         )
         .then(() => console.log("[inject] asset uploaded:", asset.key))
-        .catch((e) => console.error("[inject] asset failed:", asset.key, e.response && e.response.status, JSON.stringify(e.response && e.response.data)));
+        .catch((e) =>
+          console.error(
+            "[inject] asset failed:",
+            asset.key,
+            e.response && e.response.status,
+            JSON.stringify(e.response && e.response.data),
+          ),
+        );
     }
 
     // Save to DB
@@ -441,7 +488,11 @@ app.post("/inject-section", requireSession, async (req, res) => {
       success: true,
       message: isActive
         ? '"' + section.name + '" added to your active theme!'
-        : '"' + section.name + '" added to "' + targetTheme.name + '" (not your active theme). Publish it to see it live.',
+        : '"' +
+          section.name +
+          '" added to "' +
+          targetTheme.name +
+          '" (not your active theme). Publish it to see it live.',
       targetTheme: { id: targetTheme.id, name: targetTheme.name },
       installedToActiveTheme: isActive,
       themeEditorUrl,
@@ -574,7 +625,12 @@ app.get("/check-scopes", async (req, res) => {
           }
         }`,
       },
-      { headers: { "X-Shopify-Access-Token": session.accessToken, "Content-Type": "application/json" } },
+      {
+        headers: {
+          "X-Shopify-Access-Token": session.accessToken,
+          "Content-Type": "application/json",
+        },
+      },
     );
     const scopes = (
       response.data.data.currentAppInstallation.accessScopes || []
@@ -589,7 +645,12 @@ app.get("/check-scopes", async (req, res) => {
         : "PROBLEM — write_themes scope is missing. Uninstall and reinstall the app.",
     });
   } catch (err) {
-    res.status(500).json({ error: err.message, shopifyError: err.response && err.response.data });
+    res
+      .status(500)
+      .json({
+        error: err.message,
+        shopifyError: err.response && err.response.data,
+      });
   }
 });
 
@@ -770,3 +831,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log("Server running on http://localhost:" + PORT),
 );
+// Reverted: REST Assets API for theme file injection commit - wed_apr_22_20206_16:38
