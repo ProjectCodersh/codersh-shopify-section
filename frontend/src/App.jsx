@@ -360,13 +360,18 @@ export default function App() {
         linkText: "Open Theme Editor →",
       });
     } catch (err) {
-      const shopifyMsg = err.response?.data?.shopifyError?.errors
-        || err.response?.data?.shopifyError?.error
-        || err.response?.data?.error
-        || err.message;
+      const data = err.response?.data;
+      const shopifyMsg =
+        data?.shopifyError?.errors ||
+        data?.shopifyError?.error ||
+        data?.error ||
+        err.message;
+      const authUrl = data?.authUrl || null;
       setMessage({
         type: "error",
         text: `Failed to add "${section.name}": ${typeof shopifyMsg === "object" ? JSON.stringify(shopifyMsg) : shopifyMsg}`,
+        link: authUrl,
+        linkText: authUrl ? "Reinstall the app to fix this →" : null,
       });
     }
     setInstalling(null);

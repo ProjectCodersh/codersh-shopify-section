@@ -341,7 +341,41 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
     const liquidCode = getSectionLiquid(section.file);
 
-    // Fetch themes
+    // ── Step 1: Verify write_themes scope ─────────────────────────────────────
+    // Without this scope every REST write returns 404 and every GraphQL mutation
+    // returns "Access denied". Check once upfront to give a clear error.
+    try {
+      const scopeRes = await axios.post(
+        "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
+        { query: "{ currentAppInstallation { accessScopes { handle } } }" },
+        {
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      const scopes = (
+        (scopeRes.data &&
+          scopeRes.data.data &&
+          scopeRes.data.data.currentAppInstallation &&
+          scopeRes.data.data.currentAppInstallation.accessScopes) ||
+        []
+      ).map((s) => s.handle);
+      console.log("[inject] granted scopes:", scopes.join(", "));
+      if (!scopes.includes("write_themes")) {
+        return res.status(403).json({
+          error:
+            "Missing write_themes permission. Please reinstall the app to grant theme access.",
+          authUrl: HOST + "/auth?shop=" + shop,
+          grantedScopes: scopes,
+        });
+      }
+    } catch (e) {
+      console.warn("[inject] scope check failed (continuing):", e.message);
+    }
+
+    // ── Step 2: Fetch themes ──────────────────────────────────────────────────
     let themesResponse;
     try {
       themesResponse = await axios.get(
@@ -377,8 +411,6 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(404).json({ error: "No published theme found." });
     }
 
-    // Try the active theme first — GraphQL themeFilesUpsert may succeed even
-    // for Theme Store themes. If it fails, fall through to any other theme.
     const candidates = [
       activeTheme,
       ...themes.filter((t) => t.id !== activeTheme.id),
@@ -388,23 +420,40 @@ app.post("/inject-section", requireSession, async (req, res) => {
     let targetTheme = null;
     let lastErr = null;
 
+    // ── Step 3: Write section liquid (GraphQL first, REST fallback) ───────────
+    // GraphQL themeFilesUpsert works even on locked Theme Store themes.
+    // REST Assets API only works on themes without theme_store_id.
     for (const candidate of candidates) {
       console.log(
         "[inject] trying theme:",
         candidate.name,
         "id:",
         candidate.id,
+        "locked:",
+        !!candidate.theme_store_id,
       );
+      const gid = "gid://shopify/OnlineStoreTheme/" + candidate.id;
+
       try {
-        const putRes = await axios.put(
-          "https://" +
-            shop +
-            "/admin/api/" +
-            API_VER +
-            "/themes/" +
-            candidate.id +
-            "/assets.json",
-          { asset: { key: sectionKey, value: liquidCode } },
+        const gqlRes = await axios.post(
+          "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
+          {
+            query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+              themeFilesUpsert(themeId: $themeId, files: $files) {
+                upsertedThemeFiles { filename }
+                userErrors { filename field message }
+              }
+            }`,
+            variables: {
+              themeId: gid,
+              files: [
+                {
+                  filename: sectionKey,
+                  body: { type: "TEXT", value: liquidCode },
+                },
+              ],
+            },
+          },
           {
             headers: {
               "X-Shopify-Access-Token": token,
@@ -412,50 +461,132 @@ app.post("/inject-section", requireSession, async (req, res) => {
             },
           },
         );
+
+        console.log(
+          "[inject] GraphQL raw response:",
+          JSON.stringify(gqlRes.data),
+        );
+
+        if (gqlRes.data.errors && gqlRes.data.errors.length > 0) {
+          const msg = gqlRes.data.errors.map((e) => e.message).join(", ");
+          console.warn("[inject] GraphQL top-level errors:", msg);
+          lastErr = new Error(msg);
+          continue;
+        }
+
+        const result =
+          gqlRes.data.data && gqlRes.data.data.themeFilesUpsert;
+        const userErrors = result && result.userErrors;
+        const upsertedFiles = result && result.upsertedThemeFiles;
+
+        if (userErrors && userErrors.length > 0) {
+          const msg = userErrors.map((e) => e.message).join(", ");
+          console.warn("[inject] GraphQL userErrors:", msg);
+          lastErr = new Error(msg);
+          continue;
+        }
+
+        if (!upsertedFiles || upsertedFiles.length === 0) {
+          console.warn(
+            "[inject] GraphQL returned no upsertedThemeFiles — treating as failure",
+          );
+          lastErr = new Error("GraphQL mutation returned no upserted files");
+          continue;
+        }
+
         targetTheme = candidate;
         console.log(
-          "[inject] liquid uploaded to:",
-          candidate.name,
-          "→",
+          "[inject] uploaded via GraphQL:",
           sectionKey,
-          "| status:",
-          putRes.status,
+          "→",
+          candidate.name,
         );
         break;
-      } catch (err) {
+      } catch (gqlErr) {
         console.warn(
-          "[inject] PUT failed for theme:",
-          candidate.name,
-          "| status:",
-          err.response && err.response.status,
-          "| body:",
-          JSON.stringify(err.response && err.response.data),
+          "[inject] GraphQL request error:",
+          gqlErr.message,
+          JSON.stringify(gqlErr.response && gqlErr.response.data),
         );
-        lastErr = err;
+
+        // REST fallback — only viable for non-locked (non-Theme-Store) themes
+        if (!candidate.theme_store_id) {
+          try {
+            await axios.put(
+              "https://" +
+                shop +
+                "/admin/api/" +
+                API_VER +
+                "/themes/" +
+                candidate.id +
+                "/assets.json",
+              { asset: { key: sectionKey, value: liquidCode } },
+              {
+                headers: {
+                  "X-Shopify-Access-Token": token,
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+            targetTheme = candidate;
+            console.log(
+              "[inject] uploaded via REST fallback:",
+              sectionKey,
+              "→",
+              candidate.name,
+            );
+            break;
+          } catch (restErr) {
+            console.warn(
+              "[inject] REST fallback failed:",
+              restErr.response && restErr.response.status,
+              JSON.stringify(restErr.response && restErr.response.data),
+            );
+            lastErr = restErr;
+          }
+        } else {
+          lastErr = gqlErr;
+        }
       }
     }
 
     if (!targetTheme) {
       console.error("[inject] all theme write attempts failed");
       return res.status(500).json({
-        error: "Failed to write section file: " + (lastErr && lastErr.message),
-        triedThemes: candidates.map((t) => ({ id: t.id, name: t.name })),
+        error:
+          "Failed to write section file: " +
+          (lastErr && lastErr.message || "unknown error"),
+        shopifyError: lastErr && lastErr.response && lastErr.response.data,
+        triedThemes: candidates.map((t) => ({
+          id: t.id,
+          name: t.name,
+          locked: !!t.theme_store_id,
+        })),
       });
     }
 
-    // Write CSS/JS assets via REST
+    // ── Step 4: Write CSS/JS assets via GraphQL ───────────────────────────────
     const assets = getSectionAssets(section.assets || []);
-    for (const asset of assets) {
+    if (assets.length > 0) {
+      const gid = "gid://shopify/OnlineStoreTheme/" + targetTheme.id;
       await axios
-        .put(
-          "https://" +
-            shop +
-            "/admin/api/" +
-            API_VER +
-            "/themes/" +
-            targetTheme.id +
-            "/assets.json",
-          { asset: { key: asset.key, value: asset.value } },
+        .post(
+          "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
+          {
+            query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+              themeFilesUpsert(themeId: $themeId, files: $files) {
+                upsertedThemeFiles { filename }
+                userErrors { filename field message }
+              }
+            }`,
+            variables: {
+              themeId: gid,
+              files: assets.map((a) => ({
+                filename: a.key,
+                body: { type: "TEXT", value: a.value },
+              })),
+            },
+          },
           {
             headers: {
               "X-Shopify-Access-Token": token,
@@ -463,18 +594,28 @@ app.post("/inject-section", requireSession, async (req, res) => {
             },
           },
         )
-        .then(() => console.log("[inject] asset uploaded:", asset.key))
+        .then((r) => {
+          const errs =
+            r.data.data &&
+            r.data.data.themeFilesUpsert &&
+            r.data.data.themeFilesUpsert.userErrors;
+          if (errs && errs.length)
+            console.error(
+              "[inject] asset GraphQL errors:",
+              JSON.stringify(errs),
+            );
+          else
+            console.log(
+              "[inject] assets uploaded:",
+              assets.map((a) => a.key).join(", "),
+            );
+        })
         .catch((e) =>
-          console.error(
-            "[inject] asset failed:",
-            asset.key,
-            e.response && e.response.status,
-            JSON.stringify(e.response && e.response.data),
-          ),
+          console.error("[inject] assets upload failed:", e.message),
         );
     }
 
-    // Save to DB
+    // ── Step 5: Save to DB ────────────────────────────────────────────────────
     await prisma.installedSection.upsert({
       where: { shop_sectionId: { shop, sectionId: section.id } },
       update: { installedAt: new Date() },
