@@ -54,12 +54,12 @@ app.get("/auth", async (req, res) => {
     where: { shop: stateShop },
     update: {
       accessToken: state,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     },
     create: {
       shop: stateShop,
       accessToken: state,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     },
   });
 
@@ -114,11 +114,8 @@ app.get("/auth/callback", async (req, res) => {
       { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
     );
 
-    const { 
-      access_token: accessToken, 
-      expires_in: expiresIn,
-      refresh_token: oauthRefreshToken,  // ← ADD THIS
-    } = tokenResponse.data;
+    const { access_token: accessToken, expires_in: expiresIn } =
+      tokenResponse.data;
     console.log(
       "[oauth] token prefix:",
       accessToken && accessToken.slice(0, 10),
@@ -132,8 +129,8 @@ app.get("/auth/callback", async (req, res) => {
       : null;
     await prisma.session.upsert({
       where: { shop },
-      update: { accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
-      create: { shop, accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
+      update: { accessToken, refreshToken: null, expiresAt },
+      create: { shop, accessToken, refreshToken: null, expiresAt },
     });
 
     console.log("[oauth] session saved for:", shop, "| expiring:", !!expiresAt);
@@ -196,7 +193,8 @@ async function requireSession(req, res, next) {
   if (
     session &&
     session.accessToken &&
-    (!session.expiresAt || session.expiresAt > now)  // ← treat null expiresAt as "never expires"
+    session.expiresAt &&
+    session.expiresAt > now
   ) {
     console.log(
       "[auth] using cached token prefix:",
@@ -566,7 +564,23 @@ app.post("/inject-section", requireSession, async (req, res) => {
         lastErr && lastErr.response && lastErr.response.data;
 
       // Give a specific, actionable message for known Shopify restrictions
-      const allLocked = candidates.every((t) => !!t.theme_store_id);
+      // NOTE: theme_store_id is PRESERVED on duplicated themes — do NOT use it
+      // to detect locked themes. Instead check if every candidate is a Theme
+      // Store theme AND the REST API returned 403/422 (actual lock response).
+      // A 404 means wrong endpoint / API version, not a locked theme.
+      const lastStatus = lastErr && lastErr.response && lastErr.response.status;
+      const lastBody = lastErr && lastErr.response && lastErr.response.data;
+      const lastBodyStr = JSON.stringify(lastBody || "").toLowerCase();
+
+      // Shopify returns 403 or a specific "write access" userError for locked themes
+      const isActuallyLocked =
+        lastStatus === 403 ||
+        lastBodyStr.includes("cannot be modified") ||
+        lastBodyStr.includes("theme store") ||
+        lastBodyStr.includes("read-only") ||
+        errMsg.toLowerCase().includes("cannot be modified") ||
+        errMsg.toLowerCase().includes("read-only");
+
       const themesAdminUrl = "https://" + shop + "/admin/themes";
       let userFacingError;
       let actionUrl = null;
@@ -576,14 +590,25 @@ app.post("/inject-section", requireSession, async (req, res) => {
         userFacingError =
           "Shopify requires an exemption to use the Theme Files API. " +
           "Your theme could not be updated.";
-      } else if (allLocked || (lastErr && lastErr.response && lastErr.response.status === 404)) {
+      } else if (isActuallyLocked) {
         userFacingError =
           "Your theme is from the Shopify Theme Store and cannot be edited directly. " +
           "Please duplicate it first: Online Store → Themes → click ⋯ → Duplicate. Then try again.";
         actionUrl = themesAdminUrl;
         actionText = "Go to Themes →";
+      } else if (lastStatus === 401) {
+        userFacingError =
+          "Session expired or permission revoked. Please reinstall the app.";
+        actionUrl = HOST + "/auth?shop=" + shop;
+        actionText = "Reinstall App →";
+      } else if (lastStatus === 404) {
+        userFacingError =
+          "Could not find theme assets endpoint. Check your API version or theme ID.";
       } else {
-        userFacingError = "Failed to write section file: " + errMsg;
+        userFacingError =
+          "Failed to write section to theme. Error: " + errMsg +
+          (lastStatus ? " (HTTP " + lastStatus + ")" : "") +
+          (lastBodyStr.length > 5 ? " — " + JSON.stringify(lastBody).slice(0, 200) : "");
       }
 
       return res.status(500).json({
@@ -878,7 +903,8 @@ app.get("/debug-theme", async (req, res) => {
     );
     const themes = themesRes.data.themes || [];
     const activeTheme = themes.find((t) => t.role === "main");
-    const writableTheme = themes.find((t) => !t.theme_store_id);
+    // theme_store_id is preserved on duplicates — use active theme and rely on write test
+    const writableTheme = activeTheme || themes[0] || null;
 
     let writeTest = { success: false, skipped: !writableTheme };
     if (writableTheme) {
@@ -945,7 +971,7 @@ app.get("/debug-theme", async (req, res) => {
             role: writableTheme.role,
           }
         : null,
-      allThemesLocked: !writableTheme,
+      allThemesLocked: !writeTest.success, // based on actual write test, not theme_store_id
       writeTest,
       allThemes: themes.map((t) => ({
         id: t.id,
