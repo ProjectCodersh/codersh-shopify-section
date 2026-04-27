@@ -383,14 +383,21 @@ app.post("/inject-section", requireSession, async (req, res) => {
         { headers: { "X-Shopify-Access-Token": token } },
       );
     } catch (err) {
+      const status = err.response && err.response.status;
       console.error(
         "[inject] themes fetch failed:",
-        err.message,
+        status,
         JSON.stringify(err.response && err.response.data),
       );
+      if (status === 401 || status === 403 || status === 404) {
+        return res.status(401).json({
+          error:
+            "Session expired or permission revoked. Please reconnect your store.",
+          authUrl: HOST + "/auth?shop=" + shop,
+        });
+      }
       return res.status(500).json({
         error: "Failed to fetch themes: " + err.message,
-        shopifyStatus: err.response && err.response.status,
         shopifyError: err.response && err.response.data,
       });
     }
@@ -557,18 +564,17 @@ app.post("/inject-section", requireSession, async (req, res) => {
         lastErr && lastErr.response && lastErr.response.data;
 
       // Give a specific, actionable message for known Shopify restrictions
+      const allLocked = candidates.every((t) => !!t.theme_store_id);
       let userFacingError;
       if (errMsg.toLowerCase().includes("exemption")) {
         userFacingError =
           "Shopify requires an exemption to use the Theme Files API. " +
           "Submit a request at: https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/request-access";
-      } else if (
-        shopifyErrBody &&
-        JSON.stringify(shopifyErrBody).toLowerCase().includes("cannot edit")
-      ) {
+      } else if (allLocked) {
         userFacingError =
-          "Your active theme is from the Shopify Theme Store and is protected. " +
-          "In Shopify Admin go to Online Store → Themes, click '...' next to your theme → Duplicate, then try again.";
+          "Your active theme is from the Shopify Theme Store and cannot be edited by apps. " +
+          "To fix: go to Online Store → Themes in your Shopify Admin, click '...' next to your theme → Duplicate. " +
+          "Then click Add to Theme again.";
       } else {
         userFacingError = "Failed to write section file: " + errMsg;
       }

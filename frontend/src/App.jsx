@@ -362,9 +362,9 @@ export default function App() {
     } catch (err) {
       const data = err.response?.data;
       const shopifyMsg =
+        data?.error ||
         data?.shopifyError?.errors ||
         data?.shopifyError?.error ||
-        data?.error ||
         err.message;
       const authUrl = data?.authUrl || null;
       setMessage({
