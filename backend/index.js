@@ -18,7 +18,7 @@ const API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SCOPES = process.env.SCOPES || "write_themes,read_themes";
 const HOST = process.env.HOST || "http://localhost:3000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-const API_VER = "2024-10"; // 2025-01 broke themeFilesUpsert + REST Assets API
+const API_VER = "2025-10";
 
 app.use(cors());
 app.use(express.json());
@@ -114,24 +114,23 @@ app.get("/auth/callback", async (req, res) => {
       { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
     );
 
-    const {
-      access_token: accessToken,
-      expires_in: expiresIn,
-      refresh_token: oauthRefreshToken,
-    } = tokenResponse.data;
+    const { access_token: accessToken, expires_in: expiresIn } =
+      tokenResponse.data;
     console.log(
       "[oauth] token prefix:",
       accessToken && accessToken.slice(0, 10),
     );
-    console.log("[oauth] expiring:", !!expiresIn, "| has refresh_token:", !!oauthRefreshToken);
+    console.log("[oauth] expiring:", !!expiresIn);
 
+    // Save OAuth token to DB — Token Exchange in requireSession will replace
+    // it with a proper online token on the first embedded request.
     const expiresAt = expiresIn
       ? new Date(Date.now() + expiresIn * 1000)
       : null;
     await prisma.session.upsert({
       where: { shop },
-      update: { accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
-      create: { shop, accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
+      update: { accessToken, refreshToken: null, expiresAt },
+      create: { shop, accessToken, refreshToken: null, expiresAt },
     });
 
     console.log("[oauth] session saved for:", shop, "| expiring:", !!expiresAt);
@@ -162,9 +161,7 @@ async function exchangeToken(shop, sessionToken) {
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
       requested_token_type:
         "urn:shopify:params:oauth:token-type:offline-access-token",
-      // NOTE: do NOT pass expiring:1 here — it is only valid for the OAuth
-      // code exchange, not for Token Exchange. Passing it here causes Shopify
-      // to return an error or ignore the request entirely.
+      expiring: 1,
     },
   );
   return data;
@@ -193,11 +190,11 @@ async function requireSession(req, res, next) {
   const now = new Date();
 
   // ── Step 1: Use cached access token if still valid ────────────────────────
-  // Accept tokens with null expiresAt (non-expiring offline tokens from OAuth)
   if (
     session &&
     session.accessToken &&
-    (!session.expiresAt || session.expiresAt > now)
+    session.expiresAt &&
+    session.expiresAt > now
   ) {
     console.log(
       "[auth] using cached token prefix:",
@@ -308,26 +305,6 @@ app.get("/store-info", requireSession, (req, res) => {
   res.json({ shop: req.shop });
 });
 
-// ── Token diagnostic ──────────────────────────────────────────────────────────
-app.get("/test-token", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) return res.status(400).json({ error: "Missing shop" });
-  const session = await prisma.session.findUnique({ where: { shop } });
-  if (!session) return res.status(404).json({ error: "No session in DB" });
-  const token = session.accessToken;
-  const results = {};
-  try {
-    const r = await axios.get("https://" + shop + "/admin/api/" + API_VER + "/themes.json", { headers: { "X-Shopify-Access-Token": token } });
-    results.themes = { status: 200, count: r.data.themes && r.data.themes.length };
-  } catch (e) { results.themes = { status: e.response && e.response.status, error: e.response && e.response.data }; }
-  try {
-    const r = await axios.post("https://" + shop + "/admin/api/" + API_VER + "/graphql.json", { query: "{ currentAppInstallation { accessScopes { handle } } }" }, { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } });
-    const scopes = ((r.data.data && r.data.data.currentAppInstallation && r.data.data.currentAppInstallation.accessScopes) || []).map(s => s.handle);
-    results.scopes = { status: 200, scopes, hasWriteThemes: scopes.includes("write_themes") };
-  } catch (e) { results.scopes = { status: e.response && e.response.status, error: e.response && e.response.data }; }
-  res.json({ shop, tokenPrefix: token && token.slice(0, 12), expiresAt: session.expiresAt, hasRefreshToken: !!session.refreshToken, apiVersion: API_VER, results });
-});
-
 // ── List sections ─────────────────────────────────────────────────────────────
 app.get("/sections", requireSession, async (req, res) => {
   try {
@@ -407,28 +384,21 @@ app.post("/inject-section", requireSession, async (req, res) => {
       );
     } catch (err) {
       const status = err.response && err.response.status;
-      const errBody = err.response && err.response.data;
       console.error(
         "[inject] themes fetch failed:",
         status,
-        JSON.stringify(errBody),
+        JSON.stringify(err.response && err.response.data),
       );
-      // Only 401 = session/token invalid. 403 = scope missing. 404 = wrong API path.
-      if (status === 401) {
+      if (status === 401 || status === 403 || status === 404) {
         return res.status(401).json({
-          error: "Access token rejected by Shopify. Please reinstall the app.",
-          authUrl: HOST + "/auth?shop=" + shop,
-        });
-      }
-      if (status === 403) {
-        return res.status(403).json({
-          error: "Missing read_themes permission. Please reinstall the app.",
+          error:
+            "Session expired or permission revoked. Please reconnect your store.",
           authUrl: HOST + "/auth?shop=" + shop,
         });
       }
       return res.status(500).json({
-        error: "Failed to fetch themes (HTTP " + (status || "unknown") + "): " + err.message,
-        shopifyError: errBody,
+        error: "Failed to fetch themes: " + err.message,
+        shopifyError: err.response && err.response.data,
       });
     }
 
@@ -448,34 +418,32 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(404).json({ error: "No published theme found." });
     }
 
-    const candidates = [
-      activeTheme,
-      ...themes.filter((t) => t.id !== activeTheme.id),
-    ];
+    // Active theme first, then others
+    const allCandidates = [activeTheme, ...themes.filter((t) => t.id !== activeTheme.id)];
+    // Non-locked = custom/duplicated themes (theme_store_id=null)
+    const nonLockedCandidates = allCandidates.filter((t) => !t.theme_store_id);
+    const lockedCandidates = allCandidates.filter((t) => !!t.theme_store_id);
+
+    console.log(
+      "[inject] non-locked:", nonLockedCandidates.map((t) => t.name).join(", ") || "none",
+      "| locked:", lockedCandidates.map((t) => t.name).join(", ") || "none",
+    );
 
     const sectionKey = "sections/" + section.id + ".liquid";
+    const gqlFiles = [{ filename: sectionKey, body: { type: "TEXT", value: liquidCode } }];
     let targetTheme = null;
     let lastErr = null;
+    let lastErrSource = "none";
 
-    // ── Step 3: Write section liquid ──────────────────────────────────────────
-    // Strategy: try GraphQL themeFilesUpsert first (works for locked themes
-    // once Shopify grants an exemption). If GraphQL fails for ANY reason
-    // (including "exemption required"), always fall through to REST Assets API.
-    // REST works on dev stores for all themes and on production stores for
-    // custom (non-Theme-Store) themes.
-    for (const candidate of candidates) {
-      console.log(
-        "[inject] trying theme:",
-        candidate.name,
-        "id:",
-        candidate.id,
-        "locked:",
-        !!candidate.theme_store_id,
-      );
+    // ── Step 3a: Non-locked themes — GraphQL primary, REST fallback ───────────
+    // GraphQL themeFilesUpsert works on custom/duplicated themes WITHOUT any Shopify
+    // exemption. The REST Assets API has been deprecated on newer Shopify stores
+    // (silently returns 404 even with valid write_themes token), so GraphQL is now
+    // the reliable path. REST kept as fallback for older store configurations.
+    for (const candidate of nonLockedCandidates) {
       const gid = "gid://shopify/OnlineStoreTheme/" + candidate.id;
+      console.log("[inject] non-locked GraphQL attempt:", candidate.name);
 
-      // Attempt A: GraphQL themeFilesUpsert
-      let gqlSucceeded = false;
       try {
         const gqlRes = await axios.post(
           "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
@@ -486,159 +454,117 @@ app.post("/inject-section", requireSession, async (req, res) => {
                 userErrors { filename field message }
               }
             }`,
-            variables: {
-              themeId: gid,
-              files: [
-                {
-                  filename: sectionKey,
-                  body: { type: "TEXT", value: liquidCode },
-                },
-              ],
-            },
+            variables: { themeId: gid, files: gqlFiles },
           },
-          {
-            headers: {
-              "X-Shopify-Access-Token": token,
-              "Content-Type": "application/json",
-            },
-          },
+          { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
         );
-
-        console.log(
-          "[inject] GraphQL response:",
-          JSON.stringify(gqlRes.data),
-        );
-
         const topErrors = gqlRes.data.errors;
+        const result = gqlRes.data.data && gqlRes.data.data.themeFilesUpsert;
+        const userErrors = result && result.userErrors;
+        const upserted = result && result.upsertedThemeFiles;
+
         if (topErrors && topErrors.length > 0) {
-          const msg = topErrors.map((e) => e.message).join(", ");
-          console.warn("[inject] GraphQL top-level errors:", msg, JSON.stringify(topErrors));
-          lastErr = new Error(msg);
-          // Fall through to REST attempt below
-        } else {
+          throw new Error(topErrors.map((e) => e.message).join(", "));
+        }
+        if (userErrors && userErrors.length > 0) {
+          throw new Error(userErrors.map((e) => e.message).join(", "));
+        }
+        if (!upserted || upserted.length === 0) {
+          throw new Error("GraphQL returned no upserted files");
+        }
+
+        targetTheme = candidate;
+        console.log("[inject] GraphQL success:", sectionKey, "→", candidate.name);
+        break;
+      } catch (gqlErr) {
+        console.warn("[inject] GraphQL failed on", candidate.name, ":", gqlErr.message);
+        lastErr = gqlErr;
+        lastErrSource = "graphql-nonlocked";
+      }
+
+      // REST fallback for this non-locked theme
+      try {
+        await axios.put(
+          "https://" + shop + "/admin/api/" + API_VER + "/themes/" + candidate.id + "/assets.json",
+          { asset: { key: sectionKey, value: liquidCode } },
+          { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
+        );
+        targetTheme = candidate;
+        console.log("[inject] REST success:", sectionKey, "→", candidate.name);
+        break;
+      } catch (restErr) {
+        console.warn("[inject] REST failed on", candidate.name, ":", restErr.response && restErr.response.status, JSON.stringify(restErr.response && restErr.response.data));
+        lastErr = restErr;
+        lastErrSource = "rest-nonlocked";
+      }
+    }
+
+    // ── Step 3b: Locked themes — GraphQL only (needs Shopify exemption) ───────
+    if (!targetTheme) {
+      for (const candidate of lockedCandidates) {
+        const gid = "gid://shopify/OnlineStoreTheme/" + candidate.id;
+        console.log("[inject] locked GraphQL attempt:", candidate.name);
+        try {
+          const gqlRes = await axios.post(
+            "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
+            {
+              query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+                themeFilesUpsert(themeId: $themeId, files: $files) {
+                  upsertedThemeFiles { filename }
+                  userErrors { filename field message }
+                }
+              }`,
+              variables: { themeId: gid, files: gqlFiles },
+            },
+            { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
+          );
+          const topErrors = gqlRes.data.errors;
           const result = gqlRes.data.data && gqlRes.data.data.themeFilesUpsert;
           const userErrors = result && result.userErrors;
           const upserted = result && result.upsertedThemeFiles;
 
-          if (userErrors && userErrors.length > 0) {
-            const msg = userErrors.map((e) => e.message).join(", ");
-            console.warn("[inject] GraphQL userErrors:", msg);
-            lastErr = new Error(msg);
-            // Fall through to REST attempt below
-          } else if (!upserted || upserted.length === 0) {
-            console.warn("[inject] GraphQL returned no upsertedThemeFiles");
-            lastErr = new Error("GraphQL mutation returned no upserted files");
-            // Fall through to REST attempt below
-          } else {
-            gqlSucceeded = true;
-            targetTheme = candidate;
-            console.log(
-              "[inject] uploaded via GraphQL:",
-              sectionKey,
-              "→",
-              candidate.name,
-            );
-          }
+          if (topErrors && topErrors.length > 0) throw new Error(topErrors.map((e) => e.message).join(", "));
+          if (userErrors && userErrors.length > 0) throw new Error(userErrors.map((e) => e.message).join(", "));
+          if (!upserted || upserted.length === 0) throw new Error("GraphQL returned no upserted files");
+
+          targetTheme = candidate;
+          console.log("[inject] GraphQL success on locked theme:", candidate.name);
+          break;
+        } catch (gqlErr) {
+          console.warn("[inject] GraphQL failed on locked theme", candidate.name, ":", gqlErr.message);
+          lastErr = gqlErr;
+          lastErrSource = "graphql-locked";
         }
-      } catch (gqlErr) {
-        console.warn(
-          "[inject] GraphQL network error:",
-          gqlErr.message,
-          JSON.stringify(gqlErr.response && gqlErr.response.data),
-        );
-        lastErr = gqlErr;
-      }
-
-      if (gqlSucceeded) break;
-
-      // Attempt B: REST Assets API fallback
-      try {
-        await axios.put(
-          "https://" +
-            shop +
-            "/admin/api/" +
-            API_VER +
-            "/themes/" +
-            candidate.id +
-            "/assets.json",
-          { asset: { key: sectionKey, value: liquidCode } },
-          {
-            headers: {
-              "X-Shopify-Access-Token": token,
-              "Content-Type": "application/json",
-            },
-          },
-        );
-        targetTheme = candidate;
-        console.log(
-          "[inject] uploaded via REST:",
-          sectionKey,
-          "→",
-          candidate.name,
-        );
-        break;
-      } catch (restErr) {
-        console.warn(
-          "[inject] REST failed:",
-          restErr.response && restErr.response.status,
-          JSON.stringify(restErr.response && restErr.response.data),
-        );
-        lastErr = restErr;
       }
     }
 
     if (!targetTheme) {
-      console.error("[inject] all theme write attempts failed");
       const errMsg = (lastErr && lastErr.message) || "unknown error";
-      const shopifyErrBody =
-        lastErr && lastErr.response && lastErr.response.data;
-
-      // Give a specific, actionable message for known Shopify restrictions
-      // NOTE: theme_store_id is PRESERVED on duplicated themes — do NOT use it
-      // to detect locked themes. Instead check if every candidate is a Theme
-      // Store theme AND the REST API returned 403/422 (actual lock response).
-      // A 404 means wrong endpoint / API version, not a locked theme.
-      const lastStatus = lastErr && lastErr.response && lastErr.response.status;
-      const lastBody = lastErr && lastErr.response && lastErr.response.data;
-      const lastBodyStr = JSON.stringify(lastBody || "").toLowerCase();
-
-      // Shopify returns 403 or a specific "write access" userError for locked themes
-      const isActuallyLocked =
-        lastStatus === 403 ||
-        lastBodyStr.includes("cannot be modified") ||
-        lastBodyStr.includes("theme store") ||
-        lastBodyStr.includes("read-only") ||
-        errMsg.toLowerCase().includes("cannot be modified") ||
-        errMsg.toLowerCase().includes("read-only");
-
+      const shopifyErrBody = lastErr && lastErr.response && lastErr.response.data;
       const themesAdminUrl = "https://" + shop + "/admin/themes";
+      console.error("[inject] all attempts failed. source:", lastErrSource, "| error:", errMsg);
+
       let userFacingError;
       let actionUrl = null;
       let actionText = null;
 
-      if (errMsg.toLowerCase().includes("exemption")) {
+      if (nonLockedCandidates.length === 0) {
         userFacingError =
-          "Shopify requires an exemption to use the Theme Files API. " +
-          "Your theme could not be updated.";
-      } else if (isActuallyLocked) {
-        userFacingError =
-          "Your theme is from the Shopify Theme Store and cannot be edited directly. " +
-          "Please duplicate it first: Online Store → Themes → click ⋯ → Duplicate. Then try again.";
+          "All your themes are from the Shopify Theme Store and cannot be edited. " +
+          "Please duplicate your active theme: Themes → ⋯ → Duplicate.";
         actionUrl = themesAdminUrl;
         actionText = "Go to Themes →";
-      } else if (lastStatus === 401) {
+      } else if (errMsg.toLowerCase().includes("exemption")) {
         userFacingError =
-          "Session expired or permission revoked. Please reinstall the app.";
-        actionUrl = HOST + "/auth?shop=" + shop;
-        actionText = "Reinstall App →";
-      } else if (lastStatus === 404) {
-        userFacingError =
-          "Could not find theme assets endpoint. Check your API version or theme ID.";
+          "Shopify requires a special exemption to edit this theme. " +
+          "Please duplicate your active theme (Themes → ⋯ → Duplicate) and try again.";
+        actionUrl = themesAdminUrl;
+        actionText = "Go to Themes →";
       } else {
         userFacingError =
-          "Failed to write section to theme. Error: " + errMsg +
-          (lastStatus ? " (HTTP " + lastStatus + ")" : "") +
-          (lastBodyStr.length > 5 ? " — " + JSON.stringify(lastBody).slice(0, 200) : "");
+          "Failed to write section to your theme. Shopify error: " + errMsg;
+        actionUrl = themesAdminUrl;
+        actionText = "Go to Themes →";
       }
 
       return res.status(500).json({
@@ -646,7 +572,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
         authUrl: actionUrl,
         authUrlText: actionText,
         shopifyError: shopifyErrBody,
-        triedThemes: candidates.map((t) => ({
+        triedThemes: allCandidates.map((t) => ({
           id: t.id,
           name: t.name,
           locked: !!t.theme_store_id,
@@ -933,8 +859,7 @@ app.get("/debug-theme", async (req, res) => {
     );
     const themes = themesRes.data.themes || [];
     const activeTheme = themes.find((t) => t.role === "main");
-    // theme_store_id is preserved on duplicates — use active theme and rely on write test
-    const writableTheme = activeTheme || themes[0] || null;
+    const writableTheme = themes.find((t) => !t.theme_store_id);
 
     let writeTest = { success: false, skipped: !writableTheme };
     if (writableTheme) {
@@ -1001,7 +926,7 @@ app.get("/debug-theme", async (req, res) => {
             role: writableTheme.role,
           }
         : null,
-      allThemesLocked: !writeTest.success, // based on actual write test, not theme_store_id
+      allThemesLocked: !writableTheme,
       writeTest,
       allThemes: themes.map((t) => ({
         id: t.id,
