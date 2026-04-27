@@ -54,12 +54,12 @@ app.get("/auth", async (req, res) => {
     where: { shop: stateShop },
     update: {
       accessToken: state,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
     create: {
       shop: stateShop,
       accessToken: state,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
   });
 
@@ -114,8 +114,11 @@ app.get("/auth/callback", async (req, res) => {
       { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
     );
 
-    const { access_token: accessToken, expires_in: expiresIn } =
-      tokenResponse.data;
+    const { 
+      access_token: accessToken, 
+      expires_in: expiresIn,
+      refresh_token: oauthRefreshToken,  // ← ADD THIS
+    } = tokenResponse.data;
     console.log(
       "[oauth] token prefix:",
       accessToken && accessToken.slice(0, 10),
@@ -129,8 +132,8 @@ app.get("/auth/callback", async (req, res) => {
       : null;
     await prisma.session.upsert({
       where: { shop },
-      update: { accessToken, refreshToken: null, expiresAt },
-      create: { shop, accessToken, refreshToken: null, expiresAt },
+      update: { accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
+      create: { shop, accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
     });
 
     console.log("[oauth] session saved for:", shop, "| expiring:", !!expiresAt);
@@ -193,8 +196,7 @@ async function requireSession(req, res, next) {
   if (
     session &&
     session.accessToken &&
-    session.expiresAt &&
-    session.expiresAt > now
+    (!session.expiresAt || session.expiresAt > now)  // ← treat null expiresAt as "never expires"
   ) {
     console.log(
       "[auth] using cached token prefix:",
