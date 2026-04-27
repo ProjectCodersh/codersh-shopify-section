@@ -653,6 +653,11 @@
   cursor: not-allowed;
 }
 
+.install-btn.locked {
+  background: #92400e;
+  opacity: 0.65;
+}
+
 .install-btn.installed {
   background: var(--green-light);
   color: #065f46;

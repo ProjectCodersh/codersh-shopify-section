@@ -166,6 +166,7 @@ function SectionCard({
   removing,
   installed,
   themeEditorUrl,
+  locked,
 }) {
   const isInstalling = installing === section.id;
   const isRemoving = removing === section.id;
@@ -221,13 +222,18 @@ function SectionCard({
             </>
           ) : (
             <button
-              onClick={() => !isInstalled && onInstall(section)}
-              disabled={isInstalling}
-              className={`install-btn${isInstalling ? " loading" : ""}`}
+              onClick={() => !locked && onInstall(section)}
+              disabled={isInstalling || locked}
+              className={`install-btn${isInstalling ? " loading" : ""}${locked ? " locked" : ""}`}
+              title={locked ? "Duplicate your theme first — see the warning above" : undefined}
             >
               {isInstalling ? (
                 <>
                   <span className="spinner" /> Installing…
+                </>
+              ) : locked ? (
+                <>
+                  <IconAlert /> Theme Locked
                 </>
               ) : (
                 <>
@@ -574,6 +580,7 @@ export default function App() {
               removing={removing}
               installed={installed}
               themeEditorUrl={themeEditorUrl}
+              locked={!!themeWarning}
             />
           ))}
           {filtered.length === 0 && (
