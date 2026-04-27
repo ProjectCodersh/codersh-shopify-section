@@ -308,6 +308,26 @@ app.get("/store-info", requireSession, (req, res) => {
   res.json({ shop: req.shop });
 });
 
+// ── Token diagnostic ──────────────────────────────────────────────────────────
+app.get("/test-token", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).json({ error: "Missing shop" });
+  const session = await prisma.session.findUnique({ where: { shop } });
+  if (!session) return res.status(404).json({ error: "No session in DB" });
+  const token = session.accessToken;
+  const results = {};
+  try {
+    const r = await axios.get("https://" + shop + "/admin/api/" + API_VER + "/themes.json", { headers: { "X-Shopify-Access-Token": token } });
+    results.themes = { status: 200, count: r.data.themes && r.data.themes.length };
+  } catch (e) { results.themes = { status: e.response && e.response.status, error: e.response && e.response.data }; }
+  try {
+    const r = await axios.post("https://" + shop + "/admin/api/" + API_VER + "/graphql.json", { query: "{ currentAppInstallation { accessScopes { handle } } }" }, { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } });
+    const scopes = ((r.data.data && r.data.data.currentAppInstallation && r.data.data.currentAppInstallation.accessScopes) || []).map(s => s.handle);
+    results.scopes = { status: 200, scopes, hasWriteThemes: scopes.includes("write_themes") };
+  } catch (e) { results.scopes = { status: e.response && e.response.status, error: e.response && e.response.data }; }
+  res.json({ shop, tokenPrefix: token && token.slice(0, 12), expiresAt: session.expiresAt, hasRefreshToken: !!session.refreshToken, apiVersion: API_VER, results });
+});
+
 // ── List sections ─────────────────────────────────────────────────────────────
 app.get("/sections", requireSession, async (req, res) => {
   try {
@@ -387,21 +407,28 @@ app.post("/inject-section", requireSession, async (req, res) => {
       );
     } catch (err) {
       const status = err.response && err.response.status;
+      const errBody = err.response && err.response.data;
       console.error(
         "[inject] themes fetch failed:",
         status,
-        JSON.stringify(err.response && err.response.data),
+        JSON.stringify(errBody),
       );
-      if (status === 401 || status === 403 || status === 404) {
+      // Only 401 = session/token invalid. 403 = scope missing. 404 = wrong API path.
+      if (status === 401) {
         return res.status(401).json({
-          error:
-            "Session expired or permission revoked. Please reconnect your store.",
+          error: "Access token rejected by Shopify. Please reinstall the app.",
+          authUrl: HOST + "/auth?shop=" + shop,
+        });
+      }
+      if (status === 403) {
+        return res.status(403).json({
+          error: "Missing read_themes permission. Please reinstall the app.",
           authUrl: HOST + "/auth?shop=" + shop,
         });
       }
       return res.status(500).json({
-        error: "Failed to fetch themes: " + err.message,
-        shopifyError: err.response && err.response.data,
+        error: "Failed to fetch themes (HTTP " + (status || "unknown") + "): " + err.message,
+        shopifyError: errBody,
       });
     }
 
