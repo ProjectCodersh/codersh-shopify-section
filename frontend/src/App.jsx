@@ -268,6 +268,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const [themeEditorUrl, setThemeEditorUrl] = useState("#");
+  const [themeWarning, setThemeWarning] = useState(null);
 
   // Attach Shopify session token to every axios request (Token Exchange auth).
   // Reads window.shopify at request time — avoids race condition with App Bridge init.
@@ -303,9 +304,10 @@ export default function App() {
       }
 
       try {
-        const [sectionsRes, storeRes] = await Promise.all([
+        const [sectionsRes, storeRes, themeRes] = await Promise.all([
           axios.get(`${BACKEND_URL}/sections?shop=${SHOP}`),
           axios.get(`${BACKEND_URL}/store-info?shop=${SHOP}`),
+          axios.get(`${BACKEND_URL}/debug-theme?shop=${SHOP}`).catch(() => null),
         ]);
         setSections(sectionsRes.data);
         const alreadyInstalled = sectionsRes.data
@@ -314,6 +316,14 @@ export default function App() {
         setInstalled(alreadyInstalled);
         const shop = storeRes.data.shop;
         setThemeEditorUrl(`https://${shop}/admin/themes/current/editor`);
+
+        if (themeRes?.data?.allThemesLocked) {
+          setThemeWarning({
+            activeTheme: themeRes.data.activeTheme?.name || "your active theme",
+            themesUrl: `https://${shop}/admin/themes`,
+          });
+        }
+
         setLoading(false);
       } catch (err) {
         // Only redirect to OAuth when NOT inside the Shopify admin iframe.
@@ -447,6 +457,34 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* ── Theme compatibility warning (persistent, not dismissable) ── */}
+      {themeWarning && (
+        <div className="theme-warning">
+          <span className="theme-warning-icon">⚠️</span>
+          <div className="theme-warning-body">
+            <strong>Action required — your theme cannot be edited automatically</strong>
+            <p>
+              <b>{themeWarning.activeTheme}</b> is a Shopify Theme Store theme.
+              Shopify does not allow apps to write files to it directly.
+              You need to <b>duplicate your theme first</b>, then try again.
+            </p>
+            <ol>
+              <li>Click <b>Go to Themes</b> below</li>
+              <li>Click <b>⋯</b> next to your active theme → <b>Duplicate</b></li>
+              <li>Come back here and click <b>Add to Theme</b> again</li>
+            </ol>
+            <a
+              href={themeWarning.themesUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="theme-warning-btn"
+            >
+              Go to Themes →
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* ── Message ── */}
       {message && (

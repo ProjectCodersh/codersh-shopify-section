@@ -229,6 +229,63 @@
   }
 }
 
+/* ── Theme compatibility warning ───────────────────────────────────── */
+.theme-warning {
+  display: flex;
+  gap: 14px;
+  margin: 20px 40px 0;
+  padding: 16px 20px;
+  background: #fffbeb;
+  border: 1.5px solid #f59e0b;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #78350f;
+}
+.theme-warning-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.theme-warning-body {
+  flex: 1;
+}
+.theme-warning-body strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: #92400e;
+}
+.theme-warning-body p {
+  margin: 0 0 10px;
+}
+.theme-warning-body ol {
+  margin: 0 0 14px;
+  padding-left: 20px;
+}
+.theme-warning-body ol li {
+  margin-bottom: 4px;
+}
+.theme-warning-btn {
+  display: inline-block;
+  padding: 7px 16px;
+  background: #f59e0b;
+  color: #fff;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.theme-warning-btn:hover {
+  background: #d97706;
+}
+@media (max-width: 600px) {
+  .theme-warning {
+    margin: 16px 20px 0;
+  }
+}
+
 /* ── Controls ──────────────────────────────────────────────────────── */
 .controls {
   padding: 24px 40px 0;
