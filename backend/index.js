@@ -418,29 +418,25 @@ app.post("/inject-section", requireSession, async (req, res) => {
       return res.status(404).json({ error: "No published theme found." });
     }
 
-    // Split themes: writable (duplicated/custom) vs locked (Theme Store originals).
-    // Active theme comes first in each group so we prefer writing to the live theme.
+    // Try all themes — active theme first.
+    // We do NOT pre-filter by theme_store_id because:
+    //   1. Shopify keeps theme_store_id on duplicated themes (Copy of Dawn still has it)
+    //   2. Dev stores often allow REST writes even when theme_store_id is set
+    // Let Shopify's actual HTTP response decide — try REST on every theme.
     const allCandidates = [activeTheme, ...themes.filter((t) => t.id !== activeTheme.id)];
-    const writableThemes = allCandidates.filter((t) => !t.theme_store_id);
-    const lockedThemes = allCandidates.filter((t) => !!t.theme_store_id);
 
     console.log(
-      "[inject] writable themes:",
-      writableThemes.map((t) => t.name).join(", ") || "none",
-      "| locked themes:",
-      lockedThemes.map((t) => t.name).join(", ") || "none",
+      "[inject] candidates:",
+      allCandidates.map((t) => t.name + "(locked=" + !!t.theme_store_id + ")").join(", "),
     );
 
     const sectionKey = "sections/" + section.id + ".liquid";
     let targetTheme = null;
-    let restErr = null;   // last REST error on a writable theme
-    let gqlErr = null;    // last GraphQL error on a locked theme
+    let lastRestErr = null;
 
-    // ── Strategy A: REST on writable themes (skip GraphQL — needs Shopify exemption) ──
-    // The GraphQL themeFilesUpsert mutation always fails without a Shopify-approved
-    // exemption. For unlocked (duplicated) themes, REST is the only working path.
-    for (const candidate of writableThemes) {
-      console.log("[inject] REST attempt on writable theme:", candidate.name, "id:", candidate.id);
+    // ── Strategy: REST on every theme, active first ───────────────────────────
+    for (const candidate of allCandidates) {
+      console.log("[inject] REST attempt:", candidate.name, "id:", candidate.id, "theme_store_id:", candidate.theme_store_id || "null");
       try {
         await axios.put(
           "https://" + shop + "/admin/api/" + API_VER + "/themes/" + candidate.id + "/assets.json",
@@ -448,108 +444,51 @@ app.post("/inject-section", requireSession, async (req, res) => {
           { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
         );
         targetTheme = candidate;
-        console.log("[inject] uploaded via REST:", sectionKey, "→", candidate.name);
+        console.log("[inject] REST success:", sectionKey, "→", candidate.name);
         break;
       } catch (err) {
-        console.warn(
-          "[inject] REST failed on", candidate.name, ":",
-          err.response && err.response.status,
-          JSON.stringify(err.response && err.response.data),
-        );
-        restErr = err;
-      }
-    }
-
-    // ── Strategy B: GraphQL on locked themes (only useful once Shopify grants exemption) ──
-    if (!targetTheme) {
-      for (const candidate of lockedThemes) {
-        console.log("[inject] GraphQL attempt on locked theme:", candidate.name, "id:", candidate.id);
-        const gid = "gid://shopify/OnlineStoreTheme/" + candidate.id;
-        try {
-          const gqlRes = await axios.post(
-            "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
-            {
-              query: `mutation themeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
-                themeFilesUpsert(themeId: $themeId, files: $files) {
-                  upsertedThemeFiles { filename }
-                  userErrors { filename field message }
-                }
-              }`,
-              variables: {
-                themeId: gid,
-                files: [{ filename: sectionKey, body: { type: "TEXT", value: liquidCode } }],
-              },
-            },
-            { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
-          );
-          const topErrors = gqlRes.data.errors;
-          const result = gqlRes.data.data && gqlRes.data.data.themeFilesUpsert;
-          const userErrors = result && result.userErrors;
-          const upserted = result && result.upsertedThemeFiles;
-
-          if ((topErrors && topErrors.length) || (userErrors && userErrors.length)) {
-            const msg = (topErrors || userErrors).map((e) => e.message).join(", ");
-            console.warn("[inject] GraphQL errors on", candidate.name, ":", msg);
-            gqlErr = new Error(msg);
-          } else if (upserted && upserted.length > 0) {
-            targetTheme = candidate;
-            console.log("[inject] uploaded via GraphQL:", sectionKey, "→", candidate.name);
-            break;
-          }
-        } catch (err) {
-          console.warn("[inject] GraphQL network error on", candidate.name, ":", err.message);
-          gqlErr = err;
-        }
+        const status = err.response && err.response.status;
+        const body = err.response && err.response.data;
+        console.warn("[inject] REST failed on", candidate.name, ":", status, JSON.stringify(body));
+        lastRestErr = err;
       }
     }
 
     if (!targetTheme) {
-      console.error("[inject] all write attempts failed. writable:", writableThemes.length, "locked:", lockedThemes.length);
+      console.error("[inject] all REST attempts failed");
       const themesAdminUrl = "https://" + shop + "/admin/themes";
+      const restStatus = lastRestErr && lastRestErr.response && lastRestErr.response.status;
+      const restBody = lastRestErr && lastRestErr.response && lastRestErr.response.data;
+      const allLocked = allCandidates.every((t) => !!t.theme_store_id);
 
-      // Case 1: No writable themes exist at all → user needs to duplicate
-      if (writableThemes.length === 0) {
-        return res.status(500).json({
-          error:
-            "Your active theme is from the Shopify Theme Store and cannot be edited directly. " +
-            "Please duplicate it first: Online Store → Themes → click ⋯ → Duplicate. Then try again.",
-          authUrl: themesAdminUrl,
-          authUrlText: "Go to Themes →",
-          triedThemes: allCandidates.map((t) => ({ id: t.id, name: t.name, locked: true })),
-        });
-      }
-
-      // Case 2: Writable themes exist but REST failed → token/permission issue
-      const restStatus = restErr && restErr.response && restErr.response.status;
-      const restBody = restErr && restErr.response && restErr.response.data;
       let userFacingError;
       let actionUrl = null;
       let actionText = null;
 
       if (restStatus === 401 || restStatus === 403) {
         userFacingError =
-          "Permission denied writing to your theme (HTTP " + restStatus + "). " +
-          "Please reinstall the app to refresh your permissions.";
+          "Permission denied (HTTP " + restStatus + "). " +
+          "Please reinstall the app to grant theme write access.";
         actionUrl = HOST + "/auth?shop=" + shop;
         actionText = "Reinstall App →";
+      } else if (restStatus === 404 && allLocked) {
+        userFacingError =
+          "Your themes are from the Shopify Theme Store and cannot be edited. " +
+          "Please duplicate your active theme first: Themes → ⋯ → Duplicate.";
+        actionUrl = themesAdminUrl;
+        actionText = "Go to Themes →";
       } else if (restStatus === 422) {
         const detail = restBody && restBody.errors && restBody.errors.asset
           ? restBody.errors.asset.join(", ")
           : JSON.stringify(restBody);
         userFacingError = "Shopify rejected the section file: " + detail;
-      } else if (restStatus === 404) {
-        userFacingError =
-          "Theme write failed (404). Your duplicated theme \"" +
-          writableThemes[0].name +
-          "\" may have been deleted, or your session may have expired. " +
-          "Please reload the app and try again.";
-        actionUrl = themesAdminUrl;
-        actionText = "Go to Themes →";
       } else {
         userFacingError =
-          "Failed to write section to \"" +
-          writableThemes[0].name + "\": " +
-          ((restErr && restErr.message) || "unknown error");
+          "Failed to write section to \"" + activeTheme.name + "\" (HTTP " +
+          (restStatus || "?") + "). " +
+          "Shopify response: " + (JSON.stringify(restBody) || lastRestErr.message);
+        actionUrl = themesAdminUrl;
+        actionText = "Go to Themes →";
       }
 
       return res.status(500).json({
