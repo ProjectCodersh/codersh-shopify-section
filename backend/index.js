@@ -565,22 +565,29 @@ app.post("/inject-section", requireSession, async (req, res) => {
 
       // Give a specific, actionable message for known Shopify restrictions
       const allLocked = candidates.every((t) => !!t.theme_store_id);
+      const themesAdminUrl = "https://" + shop + "/admin/themes";
       let userFacingError;
+      let actionUrl = null;
+      let actionText = null;
+
       if (errMsg.toLowerCase().includes("exemption")) {
         userFacingError =
           "Shopify requires an exemption to use the Theme Files API. " +
-          "Submit a request at: https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/request-access";
-      } else if (allLocked) {
+          "Your theme could not be updated.";
+      } else if (allLocked || (lastErr && lastErr.response && lastErr.response.status === 404)) {
         userFacingError =
-          "Your active theme is from the Shopify Theme Store and cannot be edited by apps. " +
-          "To fix: go to Online Store → Themes in your Shopify Admin, click '...' next to your theme → Duplicate. " +
-          "Then click Add to Theme again.";
+          "Your theme is from the Shopify Theme Store and cannot be edited directly. " +
+          "Please duplicate it first: Online Store → Themes → click ⋯ → Duplicate. Then try again.";
+        actionUrl = themesAdminUrl;
+        actionText = "Go to Themes →";
       } else {
         userFacingError = "Failed to write section file: " + errMsg;
       }
 
       return res.status(500).json({
         error: userFacingError,
+        authUrl: actionUrl,
+        authUrlText: actionText,
         shopifyError: shopifyErrBody,
         triedThemes: candidates.map((t) => ({
           id: t.id,

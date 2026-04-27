@@ -366,12 +366,13 @@ export default function App() {
         data?.shopifyError?.errors ||
         data?.shopifyError?.error ||
         err.message;
-      const authUrl = data?.authUrl || null;
+      const actionUrl = data?.authUrl || null;
+      const actionText = data?.authUrlText || (actionUrl ? "Fix this →" : null);
       setMessage({
         type: "error",
-        text: `Failed to add "${section.name}": ${typeof shopifyMsg === "object" ? JSON.stringify(shopifyMsg) : shopifyMsg}`,
-        link: authUrl,
-        linkText: authUrl ? "Reinstall the app to fix this →" : null,
+        text: typeof shopifyMsg === "object" ? JSON.stringify(shopifyMsg) : shopifyMsg,
+        link: actionUrl,
+        linkText: actionText,
       });
     }
     setInstalling(null);
