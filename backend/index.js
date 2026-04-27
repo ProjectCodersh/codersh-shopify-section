@@ -18,7 +18,7 @@ const API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SCOPES = process.env.SCOPES || "write_themes,read_themes";
 const HOST = process.env.HOST || "http://localhost:3000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-const API_VER = "2025-01";
+const API_VER = "2024-10"; // 2025-01 broke themeFilesUpsert + REST Assets API
 
 app.use(cors());
 app.use(express.json());
@@ -482,7 +482,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
         const topErrors = gqlRes.data.errors;
         if (topErrors && topErrors.length > 0) {
           const msg = topErrors.map((e) => e.message).join(", ");
-          console.warn("[inject] GraphQL top-level errors:", msg);
+          console.warn("[inject] GraphQL top-level errors:", msg, JSON.stringify(topErrors));
           lastErr = new Error(msg);
           // Fall through to REST attempt below
         } else {
