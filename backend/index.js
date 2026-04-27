@@ -75,8 +75,7 @@ app.get("/auth", async (req, res) => {
     "&state=" +
     state +
     "&redirect_uri=" +
-    redirectUri +
-    "&expiring=1";
+    redirectUri;
 
   res.redirect(installUrl);
 });
@@ -111,7 +110,7 @@ app.get("/auth/callback", async (req, res) => {
     // Get offline token via OAuth code exchange (initial install only)
     const tokenResponse = await axios.post(
       "https://" + shop + "/admin/oauth/access_token",
-      { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
+      { client_id: API_KEY, client_secret: API_SECRET, code },
     );
 
     const { access_token: accessToken, expires_in: expiresIn } =
@@ -161,7 +160,7 @@ async function exchangeToken(shop, sessionToken) {
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
       requested_token_type:
         "urn:shopify:params:oauth:token-type:offline-access-token",
-      expiring: 1,
+      // No expiring: 1 — gives a permanent non-expiring offline token
     },
   );
   return data;
@@ -190,17 +189,19 @@ async function requireSession(req, res, next) {
   const now = new Date();
 
   // ── Step 1: Use cached access token if still valid ────────────────────────
+  // Accept non-expiring tokens (expiresAt=null) OR tokens not yet expired.
+  // The old condition `session.expiresAt && ...` was a bug: it skipped valid
+  // non-expiring tokens, forcing an unnecessary Token Exchange on every request.
   if (
     session &&
     session.accessToken &&
-    session.expiresAt &&
-    session.expiresAt > now
+    (!session.expiresAt || session.expiresAt > now)
   ) {
     console.log(
       "[auth] using cached token prefix:",
       session.accessToken.slice(0, 10),
       "| expiresAt:",
-      session.expiresAt,
+      session.expiresAt || "non-expiring",
     );
     req.shop = shop;
     req.token = session.accessToken;
@@ -389,11 +390,11 @@ app.post("/inject-section", requireSession, async (req, res) => {
         status,
         JSON.stringify(err.response && err.response.data),
       );
-      if (status === 401 || status === 403 || status === 404) {
+      if (status === 401 || status === 403) {
         return res.status(401).json({
-          error:
-            "Session expired or permission revoked. Please reconnect your store.",
+          error: "Session expired or permission revoked. Please reinstall the app to reconnect your store.",
           authUrl: HOST + "/auth?shop=" + shop,
+          authUrlText: "Reinstall App →",
         });
       }
       return res.status(500).json({
