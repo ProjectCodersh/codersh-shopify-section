@@ -342,18 +342,11 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const liquidCode = getSectionLiquid(section.file);
 
     // ── Step 1: Verify write_themes scope ─────────────────────────────────────
-    // Without this scope every REST write returns 404 and every GraphQL mutation
-    // returns "Access denied". Check once upfront to give a clear error.
     try {
       const scopeRes = await axios.post(
         "https://" + shop + "/admin/api/" + API_VER + "/graphql.json",
         { query: "{ currentAppInstallation { accessScopes { handle } } }" },
-        {
-          headers: {
-            "X-Shopify-Access-Token": token,
-            "Content-Type": "application/json",
-          },
-        },
+        { headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } },
       );
       const scopes = (
         (scopeRes.data &&
@@ -362,17 +355,18 @@ app.post("/inject-section", requireSession, async (req, res) => {
           scopeRes.data.data.currentAppInstallation.accessScopes) ||
         []
       ).map((s) => s.handle);
-      console.log("[inject] granted scopes:", scopes.join(", "));
+      console.log("[inject] token prefix:", token && token.slice(0, 10), "| scopes:", scopes.join(", "));
       if (!scopes.includes("write_themes")) {
         return res.status(403).json({
-          error:
-            "Missing write_themes permission. Please reinstall the app to grant theme access.",
+          error: "Missing write_themes permission. Please reinstall the app to grant theme access.",
           authUrl: HOST + "/auth?shop=" + shop,
+          authUrlText: "Reinstall App →",
           grantedScopes: scopes,
         });
       }
     } catch (e) {
-      console.warn("[inject] scope check failed (continuing):", e.message);
+      console.warn("[inject] scope check failed:", e.message);
+      // Don't block — scope check may fail on network hiccup; REST will surface real errors
     }
 
     // ── Step 2: Fetch themes ──────────────────────────────────────────────────
@@ -433,10 +427,12 @@ app.post("/inject-section", requireSession, async (req, res) => {
     const sectionKey = "sections/" + section.id + ".liquid";
     let targetTheme = null;
     let lastRestErr = null;
+    // Track per-theme REST status so we can distinguish "token issue" from "theme locked"
+    const themeRestStatus = {};
 
     // ── Strategy: REST on every theme, active first ───────────────────────────
     for (const candidate of allCandidates) {
-      console.log("[inject] REST attempt:", candidate.name, "id:", candidate.id, "theme_store_id:", candidate.theme_store_id || "null");
+      console.log("[inject] REST attempt:", candidate.name, "id:", candidate.id, "locked:", !!candidate.theme_store_id);
       try {
         await axios.put(
           "https://" + shop + "/admin/api/" + API_VER + "/themes/" + candidate.id + "/assets.json",
@@ -450,31 +446,38 @@ app.post("/inject-section", requireSession, async (req, res) => {
         const status = err.response && err.response.status;
         const body = err.response && err.response.data;
         console.warn("[inject] REST failed on", candidate.name, ":", status, JSON.stringify(body));
+        themeRestStatus[candidate.id] = status;
         lastRestErr = err;
       }
     }
 
     if (!targetTheme) {
-      console.error("[inject] all REST attempts failed");
+      console.error("[inject] all REST attempts failed. Per-theme status:", JSON.stringify(themeRestStatus));
       const themesAdminUrl = "https://" + shop + "/admin/themes";
       const restStatus = lastRestErr && lastRestErr.response && lastRestErr.response.status;
       const restBody = lastRestErr && lastRestErr.response && lastRestErr.response.data;
       const allLocked = allCandidates.every((t) => !!t.theme_store_id);
 
+      // A non-locked theme returning 404 means the token lacks write_themes scope.
+      // Shopify returns {"errors":"Not Found"} (not 403) when the token can't write assets.
+      const writableThemeBlocked = allCandidates.some(
+        (t) => !t.theme_store_id && themeRestStatus[t.id] === 404,
+      );
+
       let userFacingError;
       let actionUrl = null;
       let actionText = null;
 
-      if (restStatus === 401 || restStatus === 403) {
+      if (restStatus === 401 || restStatus === 403 || writableThemeBlocked) {
         userFacingError =
-          "Permission denied (HTTP " + restStatus + "). " +
-          "Please reinstall the app to grant theme write access.";
+          "Your app session has expired or lost write_themes permission. " +
+          "Please click below to reinstall the app — it only takes a few seconds.";
         actionUrl = HOST + "/auth?shop=" + shop;
         actionText = "Reinstall App →";
       } else if (restStatus === 404 && allLocked) {
         userFacingError =
-          "Your themes are from the Shopify Theme Store and cannot be edited. " +
-          "Please duplicate your active theme first: Themes → ⋯ → Duplicate.";
+          "All your themes are from the Shopify Theme Store and cannot be edited. " +
+          "Please duplicate your active theme: Themes → ⋯ → Duplicate.";
         actionUrl = themesAdminUrl;
         actionText = "Go to Themes →";
       } else if (restStatus === 422) {
@@ -484,14 +487,13 @@ app.post("/inject-section", requireSession, async (req, res) => {
         userFacingError = "Shopify rejected the section file: " + detail;
       } else {
         userFacingError =
-          "Failed to write section to \"" + activeTheme.name + "\" (HTTP " +
-          (restStatus || "?") + "). " +
-          "Shopify response: " + (JSON.stringify(restBody) || lastRestErr.message);
+          "Unexpected error writing to theme (HTTP " + (restStatus || "?") + "): " +
+          JSON.stringify(restBody || (lastRestErr && lastRestErr.message));
         actionUrl = themesAdminUrl;
         actionText = "Go to Themes →";
       }
 
-      return res.status(500).json({
+      return res.status(writableThemeBlocked ? 403 : 500).json({
         error: userFacingError,
         authUrl: actionUrl,
         authUrlText: actionText,
@@ -500,6 +502,7 @@ app.post("/inject-section", requireSession, async (req, res) => {
           id: t.id,
           name: t.name,
           locked: !!t.theme_store_id,
+          restStatus: themeRestStatus[t.id] || null,
         })),
       });
     }
