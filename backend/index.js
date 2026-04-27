@@ -114,23 +114,24 @@ app.get("/auth/callback", async (req, res) => {
       { client_id: API_KEY, client_secret: API_SECRET, code, expiring: 1 },
     );
 
-    const { access_token: accessToken, expires_in: expiresIn } =
-      tokenResponse.data;
+    const {
+      access_token: accessToken,
+      expires_in: expiresIn,
+      refresh_token: oauthRefreshToken,
+    } = tokenResponse.data;
     console.log(
       "[oauth] token prefix:",
       accessToken && accessToken.slice(0, 10),
     );
-    console.log("[oauth] expiring:", !!expiresIn);
+    console.log("[oauth] expiring:", !!expiresIn, "| has refresh_token:", !!oauthRefreshToken);
 
-    // Save OAuth token to DB — Token Exchange in requireSession will replace
-    // it with a proper online token on the first embedded request.
     const expiresAt = expiresIn
       ? new Date(Date.now() + expiresIn * 1000)
       : null;
     await prisma.session.upsert({
       where: { shop },
-      update: { accessToken, refreshToken: null, expiresAt },
-      create: { shop, accessToken, refreshToken: null, expiresAt },
+      update: { accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
+      create: { shop, accessToken, refreshToken: oauthRefreshToken || null, expiresAt },
     });
 
     console.log("[oauth] session saved for:", shop, "| expiring:", !!expiresAt);
@@ -161,7 +162,9 @@ async function exchangeToken(shop, sessionToken) {
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
       requested_token_type:
         "urn:shopify:params:oauth:token-type:offline-access-token",
-      expiring: 1,
+      // NOTE: do NOT pass expiring:1 here — it is only valid for the OAuth
+      // code exchange, not for Token Exchange. Passing it here causes Shopify
+      // to return an error or ignore the request entirely.
     },
   );
   return data;
@@ -190,11 +193,11 @@ async function requireSession(req, res, next) {
   const now = new Date();
 
   // ── Step 1: Use cached access token if still valid ────────────────────────
+  // Accept tokens with null expiresAt (non-expiring offline tokens from OAuth)
   if (
     session &&
     session.accessToken &&
-    session.expiresAt &&
-    session.expiresAt > now
+    (!session.expiresAt || session.expiresAt > now)
   ) {
     console.log(
       "[auth] using cached token prefix:",
